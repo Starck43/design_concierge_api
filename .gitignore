@@ -1,11 +1,14 @@
 # Environment
 .env*
 .env
-prod.env
+*.env
 venv/
 
 .idea
 /src
 migrations/
+.DS_Store
+__pycache__/
+
 # Database #
 *.sqlite3
