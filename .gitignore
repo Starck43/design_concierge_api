@@ -1,0 +1,11 @@
+# Environment
+.env*
+.env
+prod.env
+venv/
+
+.idea
+/src
+migrations/
+# Database #
+*.sqlite3
