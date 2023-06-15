@@ -2,12 +2,9 @@ import re
 from enum import Enum
 
 from django.contrib.auth import get_user_model
-from django.utils import timezone
-from django.db import models
 from django.core.exceptions import ValidationError
+from django.db import models
 from django.db.models import Q
-from django.utils.crypto import get_random_string
-
 from rest_framework.authtoken.models import Token
 
 
@@ -142,14 +139,26 @@ class User(models.Model):
 		verbose_name_plural = 'Пользователи'
 
 	def __str__(self):
-		return f'{self.username} ({self.user_id})'
+		return f'{self.username} ({self.address or self.user_id})'
+
+	def calculate_average_rates(self, designer=None):
+		avg_fields = [field.name for field in Rate._meta.fields if isinstance(field, models.PositiveSmallIntegerField)]
+		filters = {'receiver': self}
+		if designer:
+			filters['author__in'] = designer.left_rate.all()
+		queryset = Rate.objects.filter(**filters)
+		avg_values = queryset.aggregate(*[models.Avg(field) for field in avg_fields]).values()
+		result = {}
+		for i, field in enumerate(avg_fields):
+			result[field] = avg_values[i]
+		return result
 
 	def get_token(self):
 		if self.access > 0:
 			return self.generate_token()
 		return None
 
-	def generate_token(self, days: int = 7):
+	def generate_token(self):
 		superuser = get_user_model().objects.filter(is_superuser=True).first()
 		token, created = Token.objects.update_or_create(user=superuser)
 		self.token = token
@@ -236,16 +245,17 @@ class Rate(models.Model):
 		related_name='received_rate',
 		limit_choices_to=~Q(groups__code=Group.DESIGNER.value),
 	)
-	quality = models.PositiveSmallIntegerField('Качество продукции', blank=True)
+	quality = models.PositiveSmallIntegerField('Качество продукции', null=True, blank=True)
 	deadlines = models.PositiveSmallIntegerField('Соблюдение сроков')
 	sales_service_quality = models.PositiveSmallIntegerField('Качество сервиса при продаже товаров/услуг')
 	service_delivery_quality = models.PositiveSmallIntegerField(
 		'Качество сервиса при установке/выполнении работ',
 		help_text='(если это предусмотрено характером продажи или услуги)',
+		null=True,
 		blank=True,
 	)
-	designer_program_quality = models.PositiveSmallIntegerField('Программа работы с дизайнерами', blank=True)
-	location = models.PositiveSmallIntegerField('Месторасположение', blank=True)
+	designer_program_quality = models.PositiveSmallIntegerField('Программа работы с дизайнерами', null=True, blank=True)
+	location = models.PositiveSmallIntegerField('Месторасположение', null=True, blank=True)
 	modified_date = models.DateField('Дата последнего обновления', auto_now=True)
 
 	class Meta:
@@ -254,6 +264,13 @@ class Rate(models.Model):
 
 	def __str__(self):
 		return f'Рейтинг для поставщика {self.receiver}'
+
+	def calculate_average_rate(self):
+		fields = [field.name for field in Rate._meta.fields if isinstance(field, models.PositiveSmallIntegerField)]
+		avg_values = []
+		for field in fields:
+			avg_values.append(getattr(self, field, None))
+		return sum(avg_values)/len(fields) if fields else None
 
 
 class Feedback(models.Model):
