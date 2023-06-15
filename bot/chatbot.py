@@ -40,7 +40,7 @@ def telegram_bot_main():
 	app.add_handler(registration_dialog)
 	app.add_handler(main_dialog)
 	app.add_handler(post_dialog)
-	# TODO: Надо посмотреть, можно ли убрать handlers и использовать из диалога registration_dialog и main_dialog
+	# TODO: Надо будет убрать handlers и использовать из диалога registration_dialog и main_dialog
 	app.add_handler(cancel_reg_handler)
 	app.add_handler(done_handler)
 
