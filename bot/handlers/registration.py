@@ -1,23 +1,29 @@
 from typing import Dict, Optional, Union
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, KeyboardButton, \
-	ReplyKeyboardMarkup
-from telegram.constants import ChatAction, ParseMode
+from telegram import (
+	Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup
+)
+from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import CallbackContext, ExtBot, ContextTypes
 
 from api.models import Group
 from bot.bot_settings import CHANNEL_ID
 from bot.constants.data import categories_list
-from bot.constants.keyboards import REGISTRATION_KEYBOARD, CANCEL_REG_KEYBOARD, CONFIRM_KEYBOARD
-from bot.constants.menus import cancel_reg_menu, continue_reg_menu, done_reg_menu
-from bot.constants.messages import only_in_list_warn_message, check_list_message, require_check_list_message
+from bot.constants.keyboards import REGISTRATION_KEYBOARD, CANCEL_REG_KEYBOARD
+from bot.constants.menus import cancel_reg_menu, continue_reg_menu
+from bot.constants.messages import (
+	only_in_list_warn_message, check_list_message, require_check_list_message, confirm_region_message,
+	show_reg_report_message, not_found_region_message
+)
 from bot.constants.regions import ALL_REGIONS
 from bot.handlers.utils import check_user_in_channel
 from bot.logger import log
 from bot.states.registration import RegState
-from bot.utils import find_obj_in_list, update_inline_keyboard, generate_inline_keyboard, get_region_by_location, \
-	fuzzy_compare, filter_list
+from bot.utils import (
+	find_obj_in_list, update_inline_keyboard, generate_inline_keyboard, get_region_by_location, fuzzy_compare,
+	filter_list
+)
 
 
 def generate_registration_info(user_data: Dict) -> str:
@@ -27,7 +33,7 @@ def generate_registration_info(user_data: Dict) -> str:
 
 	if group == Group.SUPPLIER.value:
 		res_info = f'Название: <b>{user_data.get("username", "")}</b>\n' + \
-		           f'Категории: <b>{"/".join(categories)}</b>\n' + \
+		           f'Категории: <b>{" / ".join(categories)}</b>\n' + \
 		           f'Представлены в регионах: <b>{" / ".join(regions)}</b>\n' \
 		           f'Лет на рынке: <b>{user_data.get("work_experience", "")}</b>\n'
 	else:
@@ -57,8 +63,6 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 	user_data["reg_state"] = RegState.SUPPLIER_GROUP_REGISTRATION
 	done_state = user_data.get("state", None)
 
-	print("supplier details: ", user_details)
-
 	if done_state is None:
 		user_data["cats"] = filter_list(categories_list, "group", 2)
 		user_data["top_regions"] = filter_list(ALL_REGIONS, "in_top", 1)
@@ -77,7 +81,7 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 				f'Ваше название: *{message_text.upper()}* ☑️',
 				reply_markup=continue_reg_menu,
 			)
-			
+
 			message = await check_list_message(update.message, user_data["cats"])
 			# Сохраним для изменения сообщения после продолжения
 			context.bot_data["message_id"] = message.message_id
@@ -129,41 +133,31 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 	elif done_state == "collect_regions":
 		# await update.message.delete()
 		region, c, i = fuzzy_compare(update.message.text, ALL_REGIONS, "name", 0.5)
+
 		if c > 0.9:
 			region_id = region["id"]
 			user_details["regions"][region_id] = region["name"]
+
 			await update.message.reply_text(
 				f'*{region["name"].upper()}* ☑️\n\n',
 				reply_markup=continue_reg_menu,
 			)
+
 		elif region:
-			buttons = generate_inline_keyboard([CONFIRM_KEYBOARD], callback_data=["yes", "no"])
-			await update.message.reply_text(
-				f'❔ Вы имели ввиду *{region["name"].upper()}*?\n',
-				reply_markup=buttons,
-			)
+			await confirm_region_message(update.message, region["name"].upper())
 			context.bot_data["new_region"] = region
-			#user_details["regions"][region_id] = region["name"]
+
 		else:
-			await update.message.reply_text(
-				f"⚠️ Регион с таким названием не найден!\n"
-				f"Повторите ввод.\n",
-				reply_markup=continue_reg_menu,
-			)
+			await not_found_region_message(update.message)
 
 	elif done_state == "done":
+		report_text = generate_registration_info(user_details)
+		await show_reg_report_message(update.message, report_text)
 
-		await update.message.reply_text(
-			f'🏁 <b>Регистрация завершена!</b>\n\n'
-			f'Проверьте и подтвердите Ваши данные через смс.\n\n'
-			f'{generate_registration_info(user_details)}',
-			reply_markup=done_reg_menu,
-			parse_mode=ParseMode.HTML
-		)
 		return RegState.DONE
 
 	else:
-		# Если не в режиме сбора информации, отправляем сообщение об ошибке
+		# Если не в состоянии сбора информации, отправляем сообщение об ошибке
 		await update.message.reply_text("Ошибка ввода данных.")
 
 	return RegState.SUPPLIER_GROUP_REGISTRATION
@@ -200,7 +194,7 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 			[InlineKeyboardButton(user.username, callback_data="username")],
 		])
 		await update.message.reply_text(
-			"*Введите свое имя для обращения к Вам\n"
+			"*Введите имя для обращения к Вам*\n"
 			"или выберите из предложенных вариантов ⬇️:",
 			reply_markup=name_buttons,
 		)
@@ -267,27 +261,18 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 		# Сохраняем регион, если введен вручную
 		if not user_details["location"]:
 			region, c, i = fuzzy_compare(update.message.text, ALL_REGIONS, "name", 0.5)
-			print("location fuzzy search:", region, c, i)
 
 			if c > 0.9:
 				user_details["location"] = region
 			elif region:
-				buttons = generate_inline_keyboard([CONFIRM_KEYBOARD], callback_data=["yes", "no"])
 				await update.message.delete()
-				# TODO: Вынести общую часть кода с вопросом yes-no в отдельную функцию
-				await update.message.reply_text(
-					f'❔ Вы имели ввиду *{region["name"].upper()}*?\n',
-					reply_markup=buttons,
-				)
+				await confirm_region_message(update.message, f'Вы имели ввиду *{region["name"].upper()}*')
+
 				user_details["location"] = region
 
 			else:
-				# TODO: Вынести общую часть кода здесь и ниже в отдельную функцию
-				await update.message.reply_text(
-					f"⚠️ Регион с таким названием не найден!\n"
-					f"Повторите ввод.\n",
-					reply_markup=cancel_reg_menu,
-				)
+				await not_found_region_message(update.message)
+
 		else:
 			context.user_data["state"] = "collect_regions"
 			top_regions = user_data["top_regions"]
@@ -300,6 +285,7 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 					user_details["regions"] = {}
 
 			if isinstance(user_details["location"], dict):
+				user_details["regions"] = {}
 				location_id = user_details["location"]["id"]
 				location_name: str = user_details["location"]["name"]
 				user_details["regions"][location_id] = location_name
@@ -330,36 +316,25 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 		if c > 0.9:
 			region_id = region["id"]
 			user_details["regions"][region_id] = region["name"]
+
 			await update.message.reply_text(
-				f'*{region["name"].upper()}* ☑️\n\n',
+				f'*{region["name"].upper()}* добавлен ☑️\n\n',
 				reply_markup=continue_reg_menu,
-				parse_mode=ParseMode.MARKDOWN,
 			)
 
 		elif region:
-			buttons = generate_inline_keyboard([CONFIRM_KEYBOARD], callback_data=["yes", "no"])
-			await update.message.reply_text(
-				f'❔ Вы имели ввиду *{region["name"].upper()}*?\n',
-				reply_markup=buttons,
-			)
+			await confirm_region_message(update.message, f'Вы имели ввиду *{region["name"].upper()}*')
+
 			region_id = region["id"]
 			context.bot_data["region_id"] = region_id
 			user_details["regions"][region_id] = region["name"]
 		else:
-			await update.message.reply_text(
-				f"⚠️ Регион с таким названием не найден!\n"
-				f"Повторите ввод.\n",
-				reply_markup=continue_reg_menu,
-			)
+			await not_found_region_message(update.message)
 
 	elif done_state == "done":
-		await update.message.reply_text(
-			f'🏁 <b>Регистрация завершена!</b>\n\n'
-			f'Проверьте и подтвердите Ваши данные через смс.\n\n'
-			f'{generate_registration_info(user_details)}',
-			reply_markup=done_reg_menu,
-			parse_mode=ParseMode.HTML
-		)
+		report_text = generate_registration_info(user_details)
+		await show_reg_report_message(update.message, report_text)
+
 		return RegState.DONE
 
 	else:
@@ -375,7 +350,6 @@ async def continue_reg_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
 	user_details = user_data.get("details", {})
 	done_state = user_data.get("state", None)
 	reg_state = user_data.get("reg_state", RegState.USER_GROUP_CHOOSING)
-	print("continue click:", done_state)
 
 	if done_state == "collect_username":
 		await update.message.delete()
@@ -528,6 +502,7 @@ async def confirm_region_callback(update: Update, context: ContextTypes.DEFAULT_
 	return reg_state
 
 
+# Колбэк сохранения геопозиции в данных пользователя
 async def get_location_callback(update: Update, context: CallbackContext) -> str:
 	user_data = context.user_data
 	user_details = user_data.get("details", {})
@@ -536,20 +511,20 @@ async def get_location_callback(update: Update, context: CallbackContext) -> str
 	location = update.message.location
 	# Локация получена
 	if location is not None:
-		user_details["location"] = await get_region_by_location(location.latitude, location.longitude)
-		if user_details["location"]:
-			log.info(f"User {update.effective_user.full_name} shared his location: {user_details['location']}")
-			buttons = generate_inline_keyboard([CONFIRM_KEYBOARD], callback_data=["yes", "no"])
-			await update.message.reply_text(
-				f'Ваш регион *{user_details["location"].upper()}*, все верно?\n',
-				reply_markup=buttons
-			)
+		location_text: str = await get_region_by_location(location.latitude, location.longitude)
+
+		if location_text:
+			user_details["location"] = location_text
+			log.info(f"User {update.effective_user.full_name} shared his location: {location_text}")
+			await confirm_region_message(update.message, f'Ваш регион *{location_text.upper()}*')
+
 			if reg_state == RegState.SERVICE_GROUP_REGISTRATION:
 				return await service_group_questions(update, context)
 			elif reg_state == RegState.SUPPLIER_GROUP_REGISTRATION:
 				return await supplier_group_questions(update, context)
 
 		else:
+			user_details["location"] = ''
 			location = None
 
 	if not location:
@@ -562,36 +537,33 @@ async def get_location_callback(update: Update, context: CallbackContext) -> str
 
 
 # @send_action(ChatAction.TYPING)
-async def invite_user_to_channel(user: Dict, channel_id: int, bot_: ExtBot) -> bool:
+async def invite_user_to_channel(user_details: Dict, channel_id: int, bot_: ExtBot) -> bool:
 	try:
 		await bot_.send_chat_action(chat_id=channel_id, action=ChatAction.TYPING)
 		invite_link = await bot_.export_chat_invite_link(chat_id=channel_id)
 
 		# Проверяем, что пользователь еще не присоединен к каналу
-		is_member = await check_user_in_channel(CHANNEL_ID, user["id"], bot_)
+		is_member = await check_user_in_channel(CHANNEL_ID, user_details["user_id"], bot_)
 		if is_member:
-			message_text = f'{user["username"]}, Вы уже присоединены к каналу!'
+			message_text = f'{user_details["username"]}, Вы уже присоединены к каналу!'
 		else:
 			message_text = f"Регистрация завершена! Присоединитесь к каналу по ссылке ниже"
-			log.info(f'User {user["username"]} has been registered.')
+			log.info(f'User {user_details["username"]} has been registered.')
 
 		await bot_.send_message(
-			chat_id=user["id"],
+			chat_id=user_details["user_id"],
 			text=message_text,
 			reply_markup=InlineKeyboardMarkup([
 				[InlineKeyboardButton(text='Ссылка на канал', url=invite_link, callback_data="has_joined")],
 			])
 		)
 
-		# Добавляем задержку для завершения присоединения к каналу
-		# await asyncio.sleep(2)
-
 		return not is_member
 
 	except TelegramError:
 		await bot_.send_message(
-			chat_id=user["id"],
-			text="Регистрация завершена с ошибкой! Попробуйте пройти регистрацию заново.")
+			chat_id=user_details["user_id"],
+			text="⚠️ Регистрация завершена с ошибкой! Попробуйте пройти регистрацию заново.")
 		return False
 
 
@@ -601,6 +573,7 @@ async def success_join_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 # Отзываем ссылку
 # await revoke_invite_link(channel_id, invite_link, bot)
+#   pass
 
 
 async def revoke_invite_link(channel_id: int, invite_link: str, bot_: ExtBot) -> None:
