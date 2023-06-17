@@ -3,6 +3,11 @@ from .models import Region
 from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rate, Feedback
 from rest_framework import serializers
 
+class UserGroupSerializer(serializers.ModelSerializer):
+	class Meta:
+		model = UserGroup
+		fields = ('code',)
+
 
 class CategorySerializer(serializers.ModelSerializer):
 	class Meta:
@@ -11,15 +16,15 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+	groups = serializers.SerializerMethodField()
+
 	class Meta:
 		model = User
 		fields = '__all__'
 
+	def get_groups(self, obj):
+		return list(obj.groups.values_list('code', flat=True))
 
-class UserGroupSerializer(serializers.ModelSerializer):
-	class Meta:
-		model = UserGroup
-		fields = '__all__'
 
 
 class DesignerSerializer(serializers.ModelSerializer):
