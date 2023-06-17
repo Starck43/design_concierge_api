@@ -55,7 +55,7 @@ class Group(Enum):
 
 
 class UserGroup(models.Model):
-	code = models.SmallIntegerField('Код группы', unique=True, choices=Group.get_choices())
+	code = models.SmallIntegerField('Код группы', choices=Group.get_choices(), unique=True)
 
 	class Meta:
 		verbose_name = 'Группа'
@@ -68,7 +68,12 @@ class UserGroup(models.Model):
 class Category(models.Model):
 	name = models.CharField('Название категории/вида деятельности', max_length=100)
 	group = models.ForeignKey(
-		UserGroup, verbose_name='Группа', on_delete=models.SET_NULL, related_name='categories', null=True
+		UserGroup,
+		verbose_name='Группа',
+		to_field='code',
+		on_delete=models.SET_NULL,
+		related_name='categories',
+		null=True
 	)
 
 	class Meta:
@@ -115,7 +120,7 @@ class User(models.Model):
 
 	user_id = models.CharField('ID пользователя', max_length=10, blank=True)
 	username = models.CharField('Название/имя пользователя', max_length=100)
-	groups = models.ManyToManyField(UserGroup, verbose_name='Группы')
+	groups = models.ManyToManyField(UserGroup, verbose_name='Группы', related_name='users')
 	access = models.SmallIntegerField('Вид доступа', choices=ACCESS_CHOICES, default=0)
 	description = models.TextField('Описание', blank=True)
 	categories = models.ManyToManyField(Category, verbose_name='Виды деятельности', blank=True)
@@ -270,7 +275,7 @@ class Rate(models.Model):
 		avg_values = []
 		for field in fields:
 			avg_values.append(getattr(self, field, None))
-		return sum(avg_values)/len(fields) if fields else None
+		return sum(avg_values) / len(fields) if fields else None
 
 
 class Feedback(models.Model):
