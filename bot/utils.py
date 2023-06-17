@@ -1,4 +1,5 @@
 import difflib
+import re
 from functools import wraps
 from typing import Optional, Dict, Union, List, Any, Tuple
 
@@ -8,6 +9,7 @@ from slugify import slugify
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton
 from telegram.ext import CommandHandler, filters, CallbackContext
 
+from bot.bot_settings import DATA_SERVER_URL
 from bot.constants.api import OPENSTREETMAP_GEOCODE_URL
 
 
@@ -319,22 +321,35 @@ async def fetch_data(url, headers=None, params=None):
 			print(f"HTTP error occurred: {error}")
 		except Exception as error:
 			print(f"Exception occurred: {error}")
-
-
-async def get_user_data(user_id, url, token):
-	api_url = "{}{}/".format(url, user_id)
-	headers = {
-		'Authorization': 'Token {}'.format(token)
-	}
-	response = await fetch_data(api_url, headers=headers)
-
-	if response.status_code == 200:
-		user_data = response.json()
-		# Обработка полученных данных
-
-		return user_data
-	else:
 		return None
+
+def replace_double_slashes(url: str):
+	return re.sub(r'(?<!:)//+', '/', url)
+
+
+async def get_user_data(user_id: Union[str, int], endpoint: str = "users", params=None) -> Optional[Dict]:
+	url: str = DATA_SERVER_URL or "http://localhost:8000"
+	api_url = replace_double_slashes("{}/api/{}/{}/".format(url, endpoint, str(user_id)))
+
+	response = await fetch_data(api_url, params=params)
+	if not response:
+		return {}
+
+	return response
+
+
+async def post_user_data(user_id, url, params=None, token: Optional[str] = None):
+	api_url = replace_double_slashes("{}/{}/".format(url, str(user_id)))
+	headers = {}
+	if token:
+		headers['Authorization'] = 'Token {}'.format(token)
+	response = await fetch_data(api_url, params=params, headers=headers)
+
+	if response:
+		# Обработка полученных данных
+		pass
+
+	return response
 
 
 async def get_region_by_location(latitude: float, longitude: float) -> Optional[str]:
