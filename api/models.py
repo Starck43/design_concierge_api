@@ -128,7 +128,7 @@ class User(models.Model):
 	main_region = models.ForeignKey(
 		Region, verbose_name='Рабочий регион', on_delete=models.SET_NULL, related_name='users', null=True, blank=True
 	)
-	represented_regions = models.ManyToManyField(Region, verbose_name='Регионы представления', blank=True)
+	regions = models.ManyToManyField(Region, verbose_name='Регионы представления', blank=True)
 	segment = models.CharField('Сегмент рынка', max_length=2, choices=SEGMENT_CHOICES, blank=True)
 	address = models.CharField('Адрес', max_length=150, null=True, blank=True)
 	phone = models.CharField('Контактный телефон', validators=[phone_regex], max_length=20, blank=True)
