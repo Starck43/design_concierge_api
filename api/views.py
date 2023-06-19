@@ -6,7 +6,7 @@ from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Category, User, Rate, Designer
+from api.models import Category, User, Rate, Designer
 from .serializers import (CategorySerializer, UserSerializer, RateSerializer)
 
 
@@ -20,8 +20,7 @@ class CategoryDetail(generics.RetrieveUpdateDestroyAPIView):
 	serializer_class = CategorySerializer
 
 
-class UserList(generics.ListCreateAPIView):
-	# permission_classes = (IsAuthenticated,)
+class UserList(generics.ListAPIView):
 	queryset = User.objects.all()
 	serializer_class = UserSerializer
 
@@ -39,46 +38,63 @@ class UserList(generics.ListCreateAPIView):
 
 		return queryset
 
-	def post(self, request, *args, **kwargs):
-		new_user = request.query_params.get('new_user', False)  # Получаем значение параметра url 'new_user/' из запроса
-		# new_user = request.data.get('new_user', False)  # Получаем значение параметра '?new_user' из запроса
+
+class UserDetail(APIView):
+	lookup_field = 'user_id'
+
+	def get_user(self, user_id):
+		try:
+			user = User.objects.get(user_id=user_id)
+			print(user)
+			return user
+		except User.DoesNotExist:
+			return Response(status=status.HTTP_404_NOT_FOUND)
+		except Exception:
+			return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+	def get(self, request, user_id=None):
+		user = self.get_user(user_id)
+		if not isinstance(user, User):
+			return user
+		serializer = UserSerializer(user)
+		token = user.get_token()
+		headers = {'token': token}
+		return Response(serializer.data, status=status.HTTP_200_OK, headers=headers)
+
+	def post(self, request):
+		if not request.path.endswith('/create/'):
+			return Response(status=status.HTTP_400_BAD_REQUEST)
+
 		serializer = UserSerializer(data=request.data)
 		if serializer.is_valid():
-			user = serializer.save()
-
-			if new_user:
-				token = user.get_token()
-				data = {
-					'user': UserSerializer(user).data,
-					'token': token
-				}
-			else:
-				data = {
-					'user': UserSerializer(user).data
-				}
-			return Response(data, status=status.HTTP_201_CREATED)
+			serializer.save()
+			return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+	def patch(self, request, user_id):
+		user = self.get_user(user_id)
+		if not isinstance(user, User):
+			return user
+		serializer = UserSerializer(user, data=request.data, partial=True)
+		if serializer.is_valid():
+			serializer.save()
+			return Response(serializer.data, status=status.HTTP_200_OK)
+		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class UserDetail(generics.RetrieveUpdateDestroyAPIView):
-	queryset = User.objects.all()
-	serializer_class = UserSerializer
-	lookup_field = 'user_id'  # Поле, используемое для поиска пользователя
-
-	def get(self, request, *args, **kwargs):
-		response = super().get(request, *args, **kwargs)
-		user = self.get_object()
-		token = user.get_token()
-		response.data['token'] = token
-		return response
-
+	def delete(self, request, user_id):
+		user = self.get_user(user_id)
+		if not isinstance(user, User):
+			return user
+		user.delete()
+		return Response(status=status.HTTP_204_NO_CONTENT)
+	
 
 class UpdateUsersRates(APIView):
 	# Использовать вместе с токеном в заголовке запроса
 	# permission_classes = (IsAuthenticated,)
 
-	def post(self, request, user_id, *args, **kwargs):
+	def post(self, request, user_id):
 		designer = get_object_or_404(Designer, user_id=user_id)
 		rates = request.data
 		avg_rates = []
@@ -96,10 +112,11 @@ class UpdateUsersRates(APIView):
 					serializer = RateSerializer(data=rate, partial=True)
 			else:
 				serializer = RateSerializer(data=rate, partial=True)
+
 			try:
 				serializer.is_valid(raise_exception=True)
 			except ValidationError as e:
-				return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+				return Response({'error': str(e), 'status_code': 400}, status=status.HTTP_400_BAD_REQUEST)
 			rating = serializer.save()
 
 			# Получим обновленный рейтинг и вернем его ответом

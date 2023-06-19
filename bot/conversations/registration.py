@@ -8,7 +8,7 @@ from telegram.ext import (
 
 from bot.bot_settings import CHANNEL_ID
 from bot.constants.messages import (
-	start_reg_message, welcome_start_message, interrupt_reg_message, registered_yet_message
+	start_reg_message, welcome_start_message, interrupt_reg_message, yet_registered_message
 )
 from bot.constants.patterns import (
 	CANCEL_REGISTRATION_PATTERN, CONTINUE_REGISTRATION_PATTERN, DONE_REGISTRATION_PATTERN, REGISTRATION_PATTERN
@@ -19,36 +19,59 @@ from bot.handlers.registration import (
 	get_location_callback, choose_username_callback, continue_reg_choice,
 	confirm_region_callback, choose_top_region_callback
 )
-from bot.handlers.utils import check_user_in_channel
 from bot.logger import log
 from bot.states.registration import RegState
+from bot.utils import fetch_user_data
 
 
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	user = update.effective_user
-	is_user_in_channel = await check_user_in_channel(CHANNEL_ID, user.id, context.bot)
-	if is_user_in_channel:
-		await registered_yet_message(update.message)
+
+	#is_user_in_channel = await check_user_in_channel(CHANNEL_ID, user.id, context.bot)
+	data, token = await fetch_user_data(user.id)
+
+	if data.get('user_id'):
+		await yet_registered_message(update.message)
 		return ConversationHandler.END
 
+	context.user_data["token"] = token
 	context.user_data["state"] = None
-	context.user_data["details"] = {
-		"user_id": user.id,
-	}
+	context.user_data["details"] = {"user_id": user.id}
 	await start_reg_message(update.message)
 
 	return RegState.USER_GROUP_CHOOSING
 
 
 async def end_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	if not await invite_user_to_channel(context.user_data["details"], CHANNEL_ID, context.bot):
+	user_data = context.user_data
+	user_details = user_data["details"]
+
+	if not await invite_user_to_channel(user_details, CHANNEL_ID, context.bot):
 		await welcome_start_message(update.message)
+
 	else:
 		await create_start_link(update, context)
 
-	context.bot_data.clear()
+	# сохранение данных после регистрации в БД
+	token = user_data.get('token', None)
+	headers = {'Authorization': 'Token {}'.format(token)} if token else None
+	print('before save: ', user_details)
+	# TODO: добавить поле groups = []
+	user_details.update({
+		"groups": [user_details.get('group')],
+		"categories": list(user_details["categories"].keys()),
+		"regions": list(user_details["regions"].keys()),
+	})
 
-	return ConversationHandler.END
+	data, _ = await fetch_user_data('/create/', headers=headers, method='POST', data=user_details)
+	print('after save: ', data)
+
+	if data.get('status_code') == 201:
+		context.bot_data.clear()
+		del context.user_data["state"]
+		return ConversationHandler.END
+
+	return RegState.DONE
 
 
 async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

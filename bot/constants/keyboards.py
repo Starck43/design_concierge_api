@@ -3,14 +3,13 @@ DONE_KEYBOARD = ["🏁 Завершить"]
 BACK_KEYBOARD = ["⬅️ Назад"]
 TO_TOP_KEYBOARD = ["🔙 В начало"]
 CONFIRM_KEYBOARD = ["👍 Да", "👎 Нет"]
-SEND_CONFIRMATION_KEYBOARD = [['📦 Отправить', '🚫 Отменить'],]
+SEND_CONFIRMATION_KEYBOARD = [['📦 Отправить', '🚫 Отменить'], ]
 
 GROUPS_REG_KEYBOARD = [["Дизайнер или аутсорсер"], ["Поставщик товаров"]]
 REGISTRATION_KEYBOARD = ["Начать регистрацию"]
 CANCEL_REG_KEYBOARD = ["🚫 Отменить регистрацию"]
 CONTINUE_REG_KEYBOARD = ["➡️ Продолжить регистрацию"]
 DONE_REG_KEYBOARD = ["✅ Подтвердить регистрацию"]
-
 
 PROFILE_KEYBOARD = ["Мой профиль"]
 DESIGNER_KEYBOARD = [
@@ -43,4 +42,3 @@ SUPPLIER_DETAILS_KEYBOARD = [
 	["Выставить оценку", "Оставить отзыв"],
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
-

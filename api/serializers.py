@@ -4,6 +4,12 @@ from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, F
 from rest_framework import serializers
 
 
+class UserGroupSerializer(serializers.ModelSerializer):
+	class Meta:
+		model = UserGroup
+		fields = ('code',)
+
+
 class CategorySerializer(serializers.ModelSerializer):
 	class Meta:
 		model = Category
@@ -11,15 +17,60 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+	groups = serializers.SerializerMethodField() # только на чтение для get-запросов
+
+	represented_regions = serializers.PrimaryKeyRelatedField(
+		many=True,
+		queryset=Region.objects.all(),
+		required=False
+	)
+	categories = serializers.PrimaryKeyRelatedField(
+		many=True,
+		queryset=Category.objects.all(),
+		required=False
+	)
+
 	class Meta:
 		model = User
-		fields = '__all__'
+		#fields = '__all__'
+		exclude = ('token',)
 
+	def get_groups(self, obj):
+		# return list(obj.groups.values_list('code', flat=True))
+		return list(obj.categories.values_list('group', flat=True).distinct())
 
-class UserGroupSerializer(serializers.ModelSerializer):
-	class Meta:
-		model = UserGroup
-		fields = '__all__'
+	def to_internal_value(self, data):
+		groups_data = data.pop('groups', [])
+		validated_data = super().to_internal_value(data)
+		if groups_data:
+			groups_data = list(map(int, groups_data))
+			user_groups = UserGroup.objects.filter(code__in=groups_data).values_list('code', 'id')
+			user_groups_dict = dict(user_groups)
+			validated_data['groups'] = [user_groups_dict[int(code)] for code in groups_data]
+
+		return validated_data
+
+	def create(self, validated_data):
+		groups = validated_data.pop('groups', [])
+		categories = validated_data.pop('categories', [])
+		regions = validated_data.pop('regions', [])  # Извлекаем regions из validated_data
+		user = User.objects.create(**validated_data)
+		user.groups.set(groups)
+		user.categories.set(categories)
+		user.regions.set(regions)  # Используем метод set() для установки значений regions
+		return user
+
+	def update(self, instance, validated_data):
+		groups = validated_data.pop('groups', None)
+		categories = validated_data.pop('categories', None)
+		regions = validated_data.pop('regions', None)  # Извлекаем regions из validated_data
+		if groups is not None:
+			instance.groups.set(groups)
+		if categories is not None:
+			instance.categories.set(categories)
+		if regions is not None:
+			instance.regions.set(regions)  # Используем метод set() для обновления значений regions
+		return super().update(instance, validated_data)
 
 
 class DesignerSerializer(serializers.ModelSerializer):
