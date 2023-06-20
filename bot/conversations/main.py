@@ -276,7 +276,7 @@ async def end_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if button_data == 'save':
         for result in user_data['poll_results']:
             url = current_site.domain + \
-                f'/api/users/{result["id"]}/update_rate'
+                f'/api/users/{result["id"]}/update_rates/'
             requests.post(url, data=json.dumps(result))
 
     return await go_to_main(query, user_data)
