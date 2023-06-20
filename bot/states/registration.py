@@ -3,8 +3,8 @@ from enum import Enum
 
 class RegState(Enum):
 	USER_GROUP_CHOOSING: str = "group"
-	SERVICE_GROUP_REGISTRATION: str = "service_group"
-	SUPPLIER_GROUP_REGISTRATION: str = "supplier_group"
+	SERVICE_GROUP: str = "service_group"
+	SUPPLIER_GROUP: str = "supplier_group"
 	LOCATION_CHOOSING: str = "location"
 	DONE: str = "done"
 
