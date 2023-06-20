@@ -6,16 +6,36 @@ from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rate, Designer
-from .serializers import (CategorySerializer, UserSerializer, RateSerializer)
+from api.models import Category, User, Rate, Designer, Region
+from .serializers import (CategorySerializer, UserSerializer, RateSerializer, RegionSerializer)
 
 
-class CategoryList(generics.ListCreateAPIView):
+class RegionList(generics.ListAPIView):
+	queryset = Region.objects.all()
+	serializer_class = RegionSerializer
+
+
+class RegionDetail(generics.RetrieveAPIView):
+	queryset = Region.objects.all()
+	serializer_class = RegionSerializer
+
+
+class CategoryList(generics.ListAPIView):
 	queryset = Category.objects.all()
 	serializer_class = CategorySerializer
 
+	def get_queryset(self):
+		queryset = super().get_queryset()
+		group = self.request.query_params.get('group')
 
-class CategoryDetail(generics.RetrieveUpdateDestroyAPIView):
+		if group:
+			groups = list(map(int, group.split(',')))
+			queryset = queryset.filter(group__in=groups)
+
+		return queryset
+
+
+class CategoryDetail(generics.RetrieveAPIView):
 	queryset = Category.objects.all()
 	serializer_class = CategorySerializer
 
@@ -116,7 +136,7 @@ class UpdateUsersRates(APIView):
 			try:
 				serializer.is_valid(raise_exception=True)
 			except ValidationError as e:
-				return Response({'error': str(e), 'status_code': 400}, status=status.HTTP_400_BAD_REQUEST)
+				return Response(str(e), status=status.HTTP_400_BAD_REQUEST)
 			rating = serializer.save()
 
 			# Получим обновленный рейтинг и вернем его ответом

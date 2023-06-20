@@ -112,4 +112,4 @@ class FeedbackSerializer(serializers.ModelSerializer):
 class RegionSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = Region
-		fields = ('id', 'name')
+		fields = ('id', 'name', 'in_top',)

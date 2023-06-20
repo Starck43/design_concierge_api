@@ -1,9 +1,13 @@
 from django.urls import path
-from .views import RateQuestionView, CategoryList, CategoryDetail, UserList, UserDetail, UpdateUsersRates
+from .views import (
+	RateQuestionView, CategoryList, CategoryDetail, UserList, UserDetail, UpdateUsersRates, RegionList, RegionDetail
+)
 
 # app_name = 'api'
 
 urlpatterns = [
+	path('regions/', RegionList.as_view(), name='region-list'),
+	path('regions/<int:pk>/', RegionDetail.as_view(), name='region-detail'),
 	path('categories/', CategoryList.as_view(), name='category-list'),
 	path('categories/<int:pk>/', CategoryDetail.as_view(), name='category-detail'),
 	path('users/', UserList.as_view(), name='user-list'),
@@ -16,6 +20,9 @@ urlpatterns = [
 ]
 
 # примеры запросов:
+# regions/ (GET) - получение всех регионов
+# regions/{id} (GET) - получение региона с id
+
 # categories/ (GET) - получение всех категорий
 # categories/{id} (GET) - получение категории с id
 # categories/?group={0,1,2} (GET) - получение всех категорий для групп 0, 1, 2
