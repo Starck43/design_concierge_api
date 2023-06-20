@@ -3,25 +3,28 @@ from datetime import datetime
 from typing import Optional
 
 from telegram import Update
-from telegram.ext import CommandHandler, MessageHandler, ConversationHandler, filters, CallbackQueryHandler, \
-	ContextTypes
+from telegram.ext import (
+	CommandHandler, MessageHandler, ConversationHandler, filters, CallbackQueryHandler, ContextTypes
+)
 
 from bot.bot_settings import CHANNEL_ID
-from bot.constants.menus import main_menu, reg_menu
-from bot.constants.patterns import DONE_PATTERN, PROFILE_PATTERN, BACK_PATTERN, SERVICES_PATTERN, \
-	COOPERATION_REQUESTS_PATTERN, START_PATTERN, DESIGNER_PATTERN
+from bot.constants.menus import main_menu, reg_menu, done_menu
+from bot.constants.messages import server_error_message, welcome_start_message, before_start_reg_message
+from bot.constants.patterns import (
+	DONE_PATTERN, PROFILE_PATTERN, BACK_PATTERN, SERVICES_PATTERN, COOPERATION_REQUESTS_PATTERN, START_PATTERN,
+	DESIGNER_PATTERN
+)
 from bot.conversations.registration import registration_dialog
 from bot.handlers.cooperation import cooperation_requests, fetch_supplier_requests
-from bot.handlers.done import done
+from bot.handlers.done import done, send_error_message_callback
 from bot.handlers.main import main, designer_menu_choice, activity_select_callback, supplier_select_callback
 from bot.handlers.profile import profile
 from bot.handlers.registration import create_registration_link
 from bot.handlers.services import fetch_supplier_services, services
 from bot.handlers.utils import check_user_in_channel
 from bot.logger import log
-from bot.utils import determine_greeting, generate_reply_keyboard
 from bot.states.main import MenuState
-from api.models import Group
+from bot.utils import determine_greeting, generate_reply_keyboard, fetch_user_data
 
 
 async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
@@ -30,48 +33,46 @@ async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 	user = update.message.from_user
 	user_data = context.user_data
 
-	is_user_in_channel = await check_user_in_channel(CHANNEL_ID, user.id, context.bot)
-	if not is_user_in_channel:
-		await update.message.reply_text(
-			'Здравствуйте, Вас приветствует Консьерж Сервис для дизайнеров.\n'
-		)
+	# is_user_in_channel = await check_user_in_channel(CHANNEL_ID, user.id, context.bot)
+	# Получение данных с сервера
+	res = await fetch_user_data(user.id)
+
+	if res.get("error", None):
+		await server_error_message(update.message, context, error_data=res)
+		return MenuState.DONE_MENU
+
+	data = res.get("data", {})
+	if not data.get("user_id", None):
+		await welcome_start_message(update.message)
+
 		if parameters and parameters[0].lower() == "register":
-			await update.message.reply_text(
-				"Чтобы попасть в наш закрытый канал, Вы должны пройти регистрацию.",
-				reply_markup=reg_menu,
-			)
+			await before_start_reg_message(update.message)
+
 		else:
 			await create_registration_link(update, context)
 		return ConversationHandler.END
 
+	if "details" not in user_data:
+		log.info("%s starts dialog...", user.full_name)
+
+		hour = datetime.now().time().hour
+		greeting = determine_greeting(hour)
+		reply_text = f"{greeting}, {user.full_name}"
+
+		user_data["details"] = data
+		user_data["details"]["name"] = user.full_name
+		user_data["details"]["group"] = max(user_data["details"].get("groups", []), default=-1)
+
 	else:
 		reply_text = f'{update.message.from_user.first_name}, мы уже начали диалог, если Вы помните'
 
-		if "details" not in user_data:
-			log.info("%s starts dialog...", user.full_name)
-			user_data["details"] = {
-				"id": user.id,
-				"name": user.full_name,
-			}
-			hour = datetime.now().time().hour
-			greeting = determine_greeting(hour)
+	user_data["previous_state"] = ConversationHandler.END
+	user_data["current_state"] = MenuState.MAIN_MENU
+	user_data["current_keyboard"] = main_menu.get(user_data["details"]["group"], done_menu)
 
-			reply_text = f"{greeting}, {user.full_name}"
+	await update.message.reply_text(reply_text)
 
-		# TODO: Заменить Данные на значение из БД
-		user_group = user_data["details"].get("group", Group.DESIGNER.value)
-		user_name = user_data["details"].get("username", user.full_name)
-		user_data["details"] = {
-			"group": Group.DESIGNER.value,
-			"username": user_name,
-		}
-		user_data["previous_state"] = ConversationHandler.END
-		user_data["current_state"] = MenuState.MAIN_MENU
-		user_data["current_keyboard"] = main_menu.get(user_group, None)
-
-		await update.message.reply_text(reply_text)
-
-		return await main(update, context)
+	return await main(update, context)
 
 
 async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
@@ -148,6 +149,10 @@ main_dialog = ConversationHandler(
 		), start_conversation),
 	],
 	states={
+		MenuState.DONE_MENU: [
+			done_handler,
+			CallbackQueryHandler(send_error_message_callback, pattern='error'),
+		],
 		MenuState.MAIN_MENU: [
 			done_handler,
 			profile_handler,
