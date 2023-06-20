@@ -71,13 +71,14 @@ class RegionAdmin(admin.ModelAdmin):
 	def import_regions(self, request, queryset):
 		country = Country.objects.get(code="ru")
 		for data in ALL_REGIONS:
-			region = Region(
-				name=data['name'],
-				country=country,
-				place_id=data['place_id'],
-				osm_id=data['osm_id']
-			)
-			region.save()
+			if int(data["id"]) >= 0:
+				region = Region(
+					name=data['name'],
+					country=country,
+					place_id=data['place_id'],
+					osm_id=data['osm_id']
+				)
+				region.save()
 		self.message_user(request, "Список импортирован успешно!")
 
 	import_regions.short_description = "Импорт списка объектов из констант"
@@ -91,7 +92,7 @@ class CategoryAdmin(admin.ModelAdmin):
 
 	def import_categories(self, request, queryset):
 		for data in categories_list:
-			if data["id"] >=0:
+			if data["id"] >= 0:
 				group_code = data['group']
 				user_group = UserGroup.objects.get(code=group_code)
 				category = Category(

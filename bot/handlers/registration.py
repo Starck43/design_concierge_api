@@ -7,7 +7,7 @@ from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import CallbackContext, ExtBot, ContextTypes
 
-from api.models import Group
+from bot.states.group import Group
 from bot.bot_settings import CHANNEL_ID
 from bot.constants.data import categories_list
 from bot.constants.keyboards import REGISTRATION_KEYBOARD, CANCEL_REG_KEYBOARD
@@ -36,9 +36,10 @@ def generate_registration_info(user_data: Dict) -> str:
 		           f'Категории: <b>{" / ".join(categories)}</b>\n' + \
 		           f'Представлены в регионах: <b>{" / ".join(regions)}</b>\n' \
 		           f'Лет на рынке: <b>{user_data.get("work_experience", "")}</b>\n'
+
 	else:
 		location = user_data.get("location")
-		main_region = location if isinstance(location, str) else location.get("name")
+		main_region = location if isinstance(location, str) else location.get("name", "")
 
 		res_info = f'Ваше имя: <b>{user_data.get("username", "")}</b>\n' + \
 		           f'Специализация: <b>{" / ".join(categories)}</b>\n' + \
@@ -116,6 +117,7 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 			)
 
 			user_details["regions"] = {}
+
 			top_regions = user_data["top_regions"]
 			top_regions_buttons = generate_inline_keyboard(
 				top_regions,
@@ -144,8 +146,8 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 			)
 
 		elif region:
-			await confirm_region_message(update.message, region["name"].upper())
 			context.bot_data["new_region"] = region
+			await confirm_region_message(update.message, region["name"].upper())
 
 		else:
 			await not_found_region_message(update.message)
@@ -442,7 +444,7 @@ async def choose_top_region_callback(update: Update, context: ContextTypes.DEFAU
 		selected_name: str = region["name"]
 		user_details["regions"][region_id] = selected_name
 		del user_data["top_regions"][i]
-		print(user_details["regions"], "\n", user_data["top_regions"])
+
 		if user_data["top_regions"]:
 			buttons = generate_inline_keyboard(
 				user_data["top_regions"],
@@ -480,7 +482,6 @@ async def confirm_region_callback(update: Update, context: ContextTypes.DEFAULT_
 				return await supplier_group_questions(update, context)
 
 	if done_state == "collect_regions":
-		print("collect_regions before yes no:", user_details['regions'])
 		region_id: str = context.bot_data["new_region"]["id"]
 		region_name: str = context.bot_data["new_region"]["name"]
 		await query.delete_message()
@@ -502,7 +503,7 @@ async def confirm_region_callback(update: Update, context: ContextTypes.DEFAULT_
 	return reg_state
 
 
-# Колбэк сохранения геопозиции в данных пользователя
+# Обработчик нажатия на кнопку поделиться геопозицией
 async def get_location_callback(update: Update, context: CallbackContext) -> str:
 	user_data = context.user_data
 	user_details = user_data.get("details", {})

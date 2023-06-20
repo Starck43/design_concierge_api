@@ -1,4 +1,5 @@
 import difflib
+import re
 from functools import wraps
 from typing import Optional, Dict, Union, List, Any, Tuple
 
@@ -8,6 +9,7 @@ from slugify import slugify
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton
 from telegram.ext import CommandHandler, filters, CallbackContext
 
+from bot.bot_settings import DATA_SERVER_URL
 from bot.constants.api import OPENSTREETMAP_GEOCODE_URL
 
 
@@ -314,33 +316,65 @@ def fuzzy_compare(
 	return "", 0, None
 
 
-async def fetch_data(url, headers=None, params=None):
-	async with aiohttp.ClientSession() as session:
+def replace_double_slashes(url: str):
+	return re.sub(r'(?<!:)//+', '/', url)
+
+
+async def fetch(url, headers=None, params=None, data=None, method='GET', timeout=10):
+	async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=True) as session:
 		try:
-			async with session.get(url, headers=headers, params=params) as response:
+			async with session.request(method, url, headers=headers, params=params, json=data) as response:
 				response.raise_for_status()
-				data = await response.json()
-				return data
-		except aiohttp.ClientError as error:
+				json = await response.json()
+				headers = response.headers
+				status: int = response.status
+
+				return json, status, None, headers
+
+		except aiohttp.ClientResponseError as error:
 			print(f"HTTP error occurred: {error}")
+			error_code = error.status
+			error_message = error.message
+
+		except aiohttp.ServerTimeoutError as error:
+			print(f"Server timeout error occurred: {error}")
+			error_code = error.__class__.__name__
+			error_message = error.args[0]
+
 		except Exception as error:
 			print(f"Exception occurred: {error}")
+			error_code = error.__class__.__name__
+			error_message: str = error.args[0]
+
+		return None, error_code, error_message, None
 
 
-async def get_user_data(user_id, url, token):
-	api_url = "{}{}/".format(url, user_id)
-	headers = {
-		'Authorization': 'Token {}'.format(token)
-	}
-	response = await fetch_data(api_url, headers=headers)
+async def fetch_user_data(
+		user_id: Union[str, int] = "",
+		params=None,
+		method: str = "GET",
+		headers: Optional[Dict] = None,
+		data: Optional[Dict] = None
+):
+	url = DATA_SERVER_URL or "http://localhost:8000"
+	api_url = replace_double_slashes("{}/api/users/{}/".format(url, str(user_id)))
+	response, status_code, error, headers = await fetch(api_url, params=params, method=method, headers=headers, data=data)
+	token = None
 
-	if response.status_code == 200:
-		user_data = response.json()
-		# Обработка полученных данных
+	if error or not response:
+		return {
+			'user_id': None,
+			'status_code': status_code,
+			'error': error
+		}, token
 
-		return user_data
-	else:
-		return None
+	if response:
+		response["status_code"] = status_code
+
+	if headers:
+		token = headers.get('token', None)
+
+	return response, token
 
 
 async def get_region_by_location(latitude: float, longitude: float) -> Optional[str]:
@@ -363,7 +397,7 @@ async def get_region_by_location(latitude: float, longitude: float) -> Optional[
 		"lat": latitude,
 	}
 
-	data = await fetch_data(OPENSTREETMAP_GEOCODE_URL, params=params)
+	data = await fetch(OPENSTREETMAP_GEOCODE_URL, params=params)
 
 	if data and "address" in data:
 		address = data["address"]

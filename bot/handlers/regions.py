@@ -3,7 +3,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from bot.utils import fetch_data
+from bot.utils import fetch
 from bot.states.registration import RegState
 
 
@@ -24,7 +24,7 @@ async def fetch_regions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 			"activeOnly": False,
 		}
 
-		res = await fetch_data(url)
+		res = await fetch(url)
 		if res:
 			data = res.get("data", "Пустой результат")
 			# Отправка результата пользователю в виде сообщения

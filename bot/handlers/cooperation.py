@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import BACK_KEYBOARD
 from bot.constants.menus import main_menu
-from bot.utils import fetch_data, generate_inline_keyboard, generate_reply_keyboard
+from bot.utils import fetch, generate_inline_keyboard, generate_reply_keyboard
 from bot.states.main import MenuState
 
 
@@ -39,7 +39,6 @@ async def cooperation_requests(update: Update, context: ContextTypes.DEFAULT_TYP
 # Обработка события нажатия на кнопку
 async def fetch_supplier_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	user_data = context.user_data
-	print("request")
 	query = update.callback_query
 	query_data = query.data # для передачи параметром в запросе
 
@@ -50,7 +49,7 @@ async def fetch_supplier_requests(update: Update, context: ContextTypes.DEFAULT_
 		# Выполнение API запроса к серверу
 		url = "https://run.mocky.io/v3/d8936a23-ca71-49a3-bcab-49342ce51377"
 
-		res = await fetch_data(url)
+		res = await fetch(url)
 		if res:
 			data = res.get("data", "Пустой результат")
 			# Отправка результата пользователю в виде сообщения

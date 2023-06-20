@@ -15,6 +15,7 @@ env = environ.Env()
 env.read_env(path.join(BASE_DIR, '.env'))
 
 # bot definition
+DATA_SERVER_URL = env.str('DATA_SERVER_URL')
 BOT_TOKEN = env.str('TOKEN')
 CHANNEL_ID = env.str('CHANNEL_ID')
 YANDEX_TOKEN = env.str('YANDEX_TOKEN')

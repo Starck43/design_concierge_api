@@ -4,9 +4,18 @@ from telegram import Message
 from telegram.constants import ParseMode
 
 from bot.constants.keyboards import GROUPS_REG_KEYBOARD, CONFIRM_KEYBOARD
-from bot.constants.menus import continue_reg_menu, cancel_reg_menu, start_menu, done_menu, done_reg_menu
+from bot.constants.menus import (
+    continue_reg_menu, cancel_reg_menu, start_menu, done_menu, done_reg_menu, reg_menu
+)
 from bot.states.registration import RegState
 from bot.utils import generate_inline_keyboard
+
+
+async def before_start_reg_message(message: Message) -> Message:
+    return await message.reply_text(
+        "Чтобы попасть в наш закрытый канал, Вы должны пройти регистрацию.",
+        reply_markup=reg_menu,
+    )
 
 
 async def start_reg_message(message: Message) -> Message:
@@ -116,4 +125,19 @@ async def cansel_questionnaire(message: Message, buttons: List, text: str = None
     return await message.reply_text(
         'Все несохраненные данные будут утеряны. Продолжить выход?',
         reply_markup=reply_markup,
+    )
+
+
+async def server_error_message(message: Message, error_text: str = "") -> None:
+    user = message.chat.full_name
+    await message.reply_text(
+        f"*Ошибка сервера*\n"
+        f"{error_text}\n"
+        f"Приносим свои извинения, {user}",
+        reply_markup=done_menu
+    )
+    await message.reply_text(
+        "Вы можете сообщить об ошибке администратору",
+        reply_markup=generate_inline_keyboard(
+            ["Отправить уведомление"])
     )
