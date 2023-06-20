@@ -197,20 +197,26 @@ def update_inline_keyboard(
 	for row in inline_keyboard:
 		new_row = []
 		for button in row:
-			if button.callback_data == active_value:
-				if button_type == 'checkbox':
-					icon = "☑️"
-					button_text = f"{button.text} {icon}" if not button.text.endswith(icon) else button.text[:-2]
-					new_button = InlineKeyboardButton(button_text, callback_data=button.callback_data)
-				elif button_type == 'radiobutton':
-					new_button = InlineKeyboardButton(f"🔘 {button.text}", callback_data=button.callback_data)
+			if button_type == 'rate':
+				if int(button.callback_data[-1]) <= int(active_value[-1]):
+					new_button = InlineKeyboardButton('🌟', callback_data=button.callback_data)
 				else:
-					new_button = InlineKeyboardButton(f"<b>{button.text}</b>", callback_data=button.callback_data)
+					new_button = InlineKeyboardButton('⭐️', callback_data=button.callback_data)
 			else:
-				if button_type == 'radiobutton':
-					new_button = InlineKeyboardButton(f"⚪️ {button.text}", callback_data=button.callback_data)
+				if button.callback_data == active_value:
+					if button_type == 'checkbox':
+						icon = "☑️"
+						button_text = f"{button.text} {icon}" if not button.text.endswith(icon) else button.text[:-2]
+						new_button = InlineKeyboardButton(button_text, callback_data=button.callback_data)
+					elif button_type == 'radiobutton':
+						new_button = InlineKeyboardButton(f"🔘 {button.text}", callback_data=button.callback_data)
+					else:
+						new_button = InlineKeyboardButton(f"<b>{button.text}</b>", callback_data=button.callback_data)
 				else:
-					new_button = InlineKeyboardButton(button.text, callback_data=button.callback_data)
+					if button_type == 'radiobutton':
+						new_button = InlineKeyboardButton(f"⚪️ {button.text}", callback_data=button.callback_data)
+					else:
+						new_button = InlineKeyboardButton(button.text, callback_data=button.callback_data)
 			new_row.append(new_button)
 		new_inline_keyboard.append(new_row)
 	return InlineKeyboardMarkup(new_inline_keyboard)
@@ -431,3 +437,26 @@ def filter_list(
 	else:
 		sorted_list = sorted(set(list_), key=lambda x: x if isinstance(x, str) else str(x), reverse=reverse)
 		return sorted_list
+
+
+def get_org(dic: dict, val: int):
+    for elem in dic:
+        if elem['id'] == val:
+            return elem
+    return None
+
+
+def clear_results(results: list, new_dict: dict):
+    new_results = []
+    for elem in results:
+        if not (new_dict['id'] == elem['id'] and new_dict['questions_key1'] == elem['questions_key1']):
+            new_results.append(elem)
+
+    return new_results
+
+
+def get_dict(list_dict: list, user_id: int):
+    for elem in list_dict:
+        if elem['id'] == user_id:
+            return elem
+    return None

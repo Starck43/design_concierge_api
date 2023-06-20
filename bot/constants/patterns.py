@@ -1,4 +1,4 @@
-from bot.constants.keyboards import (PROFILE_KEYBOARD, DESIGNER_PROFILE_KEYBOARD, SUPPLIER_PROFILE_KEYBOARD, \
+from bot.constants.keyboards import (PROFILE_KEYBOARD, DESIGNER_PROFILE_KEYBOARD, SUPPLIER_PROFILE_KEYBOARD,
                                      DESIGNER_KEYBOARD, SUPPLIER_LIST_KEYBOARD, SUPPLIER_DETAILS_KEYBOARD)
 from bot.utils import flatten_list
 
@@ -9,13 +9,19 @@ REGISTRATION_PATTERN = r'(начать регистрацию)|регистра�
 DONE_REGISTRATION_PATTERN = r'подтвердить регистрацию$'
 CANCEL_POST_PATTERN = r'(отменить)(.*пост)'
 BACK_PATTERN = r'назад|вернуться'
+NEXT_PATTERN = r'вперед|продолжить'
+CANCEL_PATTERN = r'отменить'
 START_PATTERN = r'начать|старт|start'
 SERVICES_PATTERN = r'услуги|список услуг'
 COOPERATION_REQUESTS_PATTERN = r'заявки|сотрудничество'
 
 PROFILE_PATTERN = r'' + str(PROFILE_KEYBOARD[0])
 DESIGNER_PATTERN = r'' + flatten_list(DESIGNER_KEYBOARD, delimiter="|")
-DESIGNER_PROFILE_PATTERN = r'' + flatten_list(DESIGNER_PROFILE_KEYBOARD, delimiter="|")
-SUPPLIER_PROFILE_PATTERN = r'' + flatten_list(SUPPLIER_PROFILE_KEYBOARD, delimiter="|")
-SUPPLIER_LIST_PATTERN = r'' + flatten_list(SUPPLIER_LIST_KEYBOARD[0], delimiter="|")
-SUPPLIER_DETAILS_PATTERN = r'' + flatten_list(SUPPLIER_DETAILS_KEYBOARD[0], delimiter="|")
+DESIGNER_PROFILE_PATTERN = r'' + \
+    flatten_list(DESIGNER_PROFILE_KEYBOARD, delimiter="|")
+SUPPLIER_PROFILE_PATTERN = r'' + \
+    flatten_list(SUPPLIER_PROFILE_KEYBOARD, delimiter="|")
+SUPPLIER_LIST_PATTERN = r'' + \
+    flatten_list(SUPPLIER_LIST_KEYBOARD[0], delimiter="|")
+SUPPLIER_DETAILS_PATTERN = r'' + \
+    flatten_list(SUPPLIER_DETAILS_KEYBOARD[0], delimiter="|")

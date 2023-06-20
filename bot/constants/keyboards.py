@@ -44,3 +44,6 @@ SUPPLIER_DETAILS_KEYBOARD = [
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
 
+QUESTIONNAIRE_KEYBOARD = [
+    ["Продолжить", "Отменить"],
+]
