@@ -1,54 +1,55 @@
 from typing import Dict, Optional, Union
 
 from telegram import (
-	Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup
+	Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, Message
 )
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import CallbackContext, ExtBot, ContextTypes
 
-from bot.states.group import Group
 from bot.bot_settings import CHANNEL_ID
 from bot.constants.data import categories_list
 from bot.constants.keyboards import REGISTRATION_KEYBOARD, CANCEL_REG_KEYBOARD
 from bot.constants.menus import cancel_reg_menu, continue_reg_menu
 from bot.constants.messages import (
-	only_in_list_warn_message, check_list_message, require_check_list_message, confirm_region_message,
-	show_reg_report_message, not_found_region_message
+	only_in_list_warn_message, check_categories_message, require_check_categories_message, confirm_region_message,
+	show_reg_report_message, not_found_region_message, server_error_message, add_new_region_message,
+	region_selected_warn_message
 )
 from bot.constants.regions import ALL_REGIONS
 from bot.handlers.utils import check_user_in_channel
 from bot.logger import log
+from bot.states.group import Group
 from bot.states.registration import RegState
 from bot.utils import (
 	find_obj_in_list, update_inline_keyboard, generate_inline_keyboard, get_region_by_location, fuzzy_compare,
-	filter_list
+	filter_list, fetch_data
 )
 
 
 def generate_registration_info(user_data: Dict) -> str:
-	group = user_data.get("group", {})
-	categories = user_data.get("categories", {}).values()
-	regions = user_data.get("regions", {}).values()
+	user_details = user_data["details"]
+	group = user_data.get("reg_group", None)
+	categories = user_details.get("categories", {}).values()
+	regions = user_details.get("regions", {}).values()
+	print("info: ", group)
+	if group == RegState.SUPPLIER_GROUP:
+		return f'Название: <b>{user_details.get("username", "")}</b>\n' + \
+		       f'Категории: <b>{" / ".join(categories)}</b>\n' + \
+		       f'Представлены в регионах: <b>{" / ".join(regions)}</b>\n' \
+		       f'Лет на рынке: <b>{user_details.get("work_experience", "")}</b>\n'
 
-	if group == Group.SUPPLIER.value:
-		res_info = f'Название: <b>{user_data.get("username", "")}</b>\n' + \
-		           f'Категории: <b>{" / ".join(categories)}</b>\n' + \
-		           f'Представлены в регионах: <b>{" / ".join(regions)}</b>\n' \
-		           f'Лет на рынке: <b>{user_data.get("work_experience", "")}</b>\n'
+	if group == RegState.SERVICE_GROUP:
+		location = user_details.get("location")
+		main_region = location.get("name", "")
 
-	else:
-		location = user_data.get("location")
-		main_region = location if isinstance(location, str) else location.get("name", "")
+		return f'Ваше имя: <b>{user_details.get("username", "")}</b>\n' + \
+		       f'Специализация: <b>{" / ".join(categories)}</b>\n' + \
+		       f'Стаж работы: <b>{user_details.get("work_experience", "")}</b>\n' \
+		       f'Представлены в регионах: <b>{" / ".join(regions)}</b>\n' \
+		       f'Основной регион: <b>{main_region}</b>\n'
 
-		res_info = f'Ваше имя: <b>{user_data.get("username", "")}</b>\n' + \
-		           f'Специализация: <b>{" / ".join(categories)}</b>\n' + \
-		           f'Стаж работы: <b>{user_data.get("work_experience", "")}</b>\n' \
-		           f'Представлены в регионах: <b>{" / ".join(regions)}</b>\n' \
-		           f'Основной регион: <b>{main_region}</b>\n'
-
-	return res_info
-
+	return ""
 
 async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	if not update.message:
@@ -61,12 +62,17 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 
 	user_data = context.user_data
 	user_details = user_data["details"]
-	user_data["reg_state"] = RegState.SUPPLIER_GROUP_REGISTRATION
+	user_data["reg_group"] = RegState.SUPPLIER_GROUP
 	done_state = user_data.get("state", None)
 
+	res = await fetch_data("/categories", params={"group": 2})
+	if res["data"]:
+		user_data["cats"] = res["data"]
+	else:
+		await server_error_message(update.message, context, error_data=res)
+		return RegState.DONE
+
 	if done_state is None:
-		user_data["cats"] = filter_list(categories_list, "group", 2)
-		user_data["top_regions"] = filter_list(ALL_REGIONS, "in_top", 1)
 		user_data["state"] = "collect_username"
 
 		await update.message.reply_text(
@@ -83,7 +89,7 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 				reply_markup=continue_reg_menu,
 			)
 
-			message = await check_list_message(update.message, user_data["cats"])
+			message = await check_categories_message(update.message, user_data["cats"])
 			# Сохраним для изменения сообщения после продолжения
 			context.bot_data["message_id"] = message.message_id
 
@@ -100,9 +106,34 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 	elif done_state == "collect_work_experience":
 		user_details["work_experience"] = update.message.text
 
-		if 'location' not in user_details:
+		if 'all_regions' not in user_data:
 			user_data["state"] = "collect_regions"
-			user_details["location"] = None
+			user_details["regions"] = {}
+
+			res = await fetch_data("/regions")
+			if res["data"]:
+				# сохраним весь список регионов
+				user_data["all_regions"] = res["data"]
+				# сохраним список популярных регионов
+				user_data["top_regions"] = filter_list(user_data["all_regions"], "in_top", 1)
+
+			else:
+				await server_error_message(update.message, context, error_data=res)
+				return RegState.DONE
+
+			top_regions_buttons = generate_inline_keyboard(
+				user_data["top_regions"],
+				item_key="name",
+				callback_data="id",
+				prefix_callback_name="region_"
+			) if user_data["top_regions"] else None
+			print(top_regions_buttons)
+			await update.message.reply_text(
+				"*Введите регионы, в которых вы представлены:*\n"
+				'или выберите из предложенных вариантов:\n',
+				reply_markup=top_regions_buttons,
+			)
+
 			location_menu = ReplyKeyboardMarkup(
 				[
 					[KeyboardButton("📍 Поделиться местоположением", request_location=True)],
@@ -112,38 +143,18 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 			)
 
 			await update.message.reply_text(
-				"*Введите регионы, в которых вы представлены:*\n",
+				"Поделитесь местоположением, чтобы выбрать текущий регион\n",
 				reply_markup=location_menu,
-			)
-
-			user_details["regions"] = {}
-
-			top_regions = user_data["top_regions"]
-			top_regions_buttons = generate_inline_keyboard(
-				top_regions,
-				item_key="name",
-				callback_data="id",
-				prefix_callback_name="region_"
-			) if top_regions else None
-
-			await update.message.reply_text(
-				"Поделитесь местоположением, чтобы указать текущий регион\n"
-				'или выберите из предложенных вариантов:\n',
-				reply_markup=top_regions_buttons,
 			)
 
 	elif done_state == "collect_regions":
 		# await update.message.delete()
-		region, c, i = fuzzy_compare(update.message.text, ALL_REGIONS, "name", 0.5)
+		region, c, i = fuzzy_compare(update.message.text, user_data["all_regions"], "name", 0.5)
 
 		if c > 0.9:
-			region_id = region["id"]
-			user_details["regions"][region_id] = region["name"]
-
-			await update.message.reply_text(
-				f'*{region["name"].upper()}* ☑️\n\n',
-				reply_markup=continue_reg_menu,
-			)
+			selected_name: str = region["name"]
+			user_details["regions"][region["id"]] = selected_name
+			await add_new_region_message(update.message, context.bot_data, selected_name.upper())
 
 		elif region:
 			context.bot_data["new_region"] = region
@@ -153,8 +164,9 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 			await not_found_region_message(update.message)
 
 	elif done_state == "done":
-		report_text = generate_registration_info(user_details)
+		report_text = generate_registration_info(user_data)
 		await show_reg_report_message(update.message, report_text)
+		user_details["groups"] = [Group.SUPPLIER.value]
 
 		return RegState.DONE
 
@@ -162,7 +174,7 @@ async def supplier_group_questions(update: Update, context: ContextTypes.DEFAULT
 		# Если не в состоянии сбора информации, отправляем сообщение об ошибке
 		await update.message.reply_text("Ошибка ввода данных.")
 
-	return RegState.SUPPLIER_GROUP_REGISTRATION
+	return RegState.SUPPLIER_GROUP
 
 
 async def service_group_questions(update: Union[Update, CallbackQuery], context: ContextTypes.DEFAULT_TYPE) -> Optional[
@@ -177,13 +189,18 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 
 	user_data = context.user_data
 	user_details = user_data["details"]
-	user_data["reg_state"] = RegState.SERVICE_GROUP_REGISTRATION
+	user_data["reg_group"] = RegState.SERVICE_GROUP
 	done_state = user_data.get("state", None)
 	user = update.message.chat
 
+	res = await fetch_data("/categories", params={"group": [0,1]})
+	if res["data"]:
+		user_data["cats"] = res["data"]
+	else:
+		await server_error_message(update.message, context, error_data=res)
+		return RegState.DONE
+
 	if done_state is None:
-		user_data["cats"] = filter_list(categories_list, "group", [0, 1])
-		user_data["top_regions"] = filter_list(ALL_REGIONS, "in_top", 1)
 		user_data["state"] = "collect_username"
 		await update.message.reply_text(
 			"*Как к Вам обращаться?*",
@@ -220,7 +237,7 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 				vertical=True
 			)
 			message = await update.message.reply_text(
-				'Отметьте те категории, в которых Вы представлены:\n'
+				'*Отметьте категории, в которых Вы представлены*\n'
 				'и нажмите *Продолжить* ⬇️\n',
 				reply_markup=categories_buttons,
 			)
@@ -243,9 +260,17 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 			f'Лет на рынке: *{user_details["work_experience"]}* ☑️',
 		)
 
-		if 'location' not in user_details:
+		if 'all_regions' not in user_data:
 			user_data["state"] = "collect_location"
 			user_details["location"] = None
+
+			res = await fetch_data("/regions")
+			if res["data"]:
+				# сохраним весь список регионов
+				user_data["all_regions"] = res["data"]
+				# сохраним список популярных регионов
+				user_data["top_regions"] = filter_list(user_data["all_regions"], "in_top", 1)
+
 			location_menu = ReplyKeyboardMarkup(
 				[
 					[KeyboardButton("📍 Поделиться местоположением", request_location=True)],
@@ -262,7 +287,7 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 	elif done_state == "collect_location":
 		# Сохраняем регион, если введен вручную
 		if not user_details["location"]:
-			region, c, i = fuzzy_compare(update.message.text, ALL_REGIONS, "name", 0.5)
+			region, c, i = fuzzy_compare(update.message.text, user_data["all_regions"], "name", 0.5)
 
 			if c > 0.9:
 				user_details["location"] = region
@@ -314,7 +339,7 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 
 	elif done_state == "collect_regions":
 		await update.message.delete()
-		region, c, i = fuzzy_compare(update.message.text, ALL_REGIONS, "name", 0.5)
+		region, c, i = fuzzy_compare(update.message.text, user_data["all_regions"], "name", 0.5)
 		if c > 0.9:
 			region_id = region["id"]
 			user_details["regions"][region_id] = region["name"]
@@ -328,14 +353,15 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 			await confirm_region_message(update.message, f'Вы имели ввиду *{region["name"].upper()}*')
 
 			region_id = region["id"]
-			context.bot_data["region_id"] = region_id
+			context.bot_data = region
 			user_details["regions"][region_id] = region["name"]
 		else:
 			await not_found_region_message(update.message)
 
 	elif done_state == "done":
-		report_text = generate_registration_info(user_details)
+		report_text = generate_registration_info(user_data)
 		await show_reg_report_message(update.message, report_text)
+		user_details["groups"] = [Group.DESIGNER.value]
 
 		return RegState.DONE
 
@@ -343,7 +369,7 @@ async def service_group_questions(update: Union[Update, CallbackQuery], context:
 		# Если не в режиме сбора информации, отправляем сообщение об ошибке
 		await update.message.reply_text("Ошибка ввода данных.")
 
-	return RegState.SERVICE_GROUP_REGISTRATION
+	return RegState.SERVICE_GROUP
 
 
 # Функция обработки сообщений после нажатия на Продолжить
@@ -351,7 +377,7 @@ async def continue_reg_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
 	user_data = context.user_data
 	user_details = user_data.get("details", {})
 	done_state = user_data.get("state", None)
-	reg_state = user_data.get("reg_state", RegState.USER_GROUP_CHOOSING)
+	reg_group = user_data.get("reg_group")
 
 	if done_state == "collect_username":
 		await update.message.delete()
@@ -368,18 +394,18 @@ async def continue_reg_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
 			)
 
 		else:
-			await require_check_list_message(update.message)
-			return reg_state
+			await require_check_categories_message(update.message)
+			return reg_group
 
 	if done_state == "collect_regions":
 		user_data["state"] = "done"
 
-	if reg_state == RegState.SERVICE_GROUP_REGISTRATION:
+	if reg_group == RegState.SERVICE_GROUP:
 		return await service_group_questions(update, context)
-	elif reg_state == RegState.SUPPLIER_GROUP_REGISTRATION:
+	elif reg_group == RegState.SUPPLIER_GROUP:
 		return await supplier_group_questions(update, context)
 	else:
-		return reg_state
+		return reg_group
 
 
 async def choose_username_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -399,34 +425,28 @@ async def choose_username_callback(update: Update, context: ContextTypes.DEFAULT
 async def choose_categories_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	query = update.callback_query
 	await query.answer()
-	button_data = query.data
+	cat_id = query.data.lstrip("category_")
 	user_data = context.user_data
 	user_details = user_data.get("details", {})
-	reg_state = user_data.get("reg_state", RegState.USER_GROUP_CHOOSING)
+	reg_group = user_data.get("reg_group", RegState.USER_GROUP_CHOOSING)
 	cats = user_data.get("cats", [])
 
 	# Обновляем категории
-	category, _ = find_obj_in_list(cats, "id", int(button_data))
-	if category:
-		selected_id = str(category["id"])
-		selected_name = category["name"]
-		selected_group = category["group"]
-		# Сохраняем наименьший номер группы для Group. В начале сравним с большим числом
-		user_details["group"] = min(selected_group, user_details.get("group", 100))
-		if user_details.setdefault("categories", {}).get(selected_id):
-			del user_details["categories"][selected_id]
+	active_category, _ = find_obj_in_list(cats, "id", int(cat_id))
+	if active_category:
+		if user_details.setdefault("categories", {}).get(cat_id):
+			del user_details["categories"][cat_id]
 		else:
-			user_details["categories"][selected_id] = selected_name
+			user_details["categories"][cat_id] = active_category["name"]
 
 		keyboard = query.message.reply_markup.inline_keyboard
-		updated_keyboard = update_inline_keyboard(keyboard, active_value=button_data, button_type="checkbox")
-
+		updated_keyboard = update_inline_keyboard(keyboard, active_value=query.data, button_type="checkbox")
 		await query.edit_message_text(
 			f"{query.message.text}",
 			reply_markup=updated_keyboard,
 		)
 
-	return reg_state
+	return reg_group
 
 
 # Обработчик нажатия на inline кнопки популярных регионов
@@ -437,29 +457,26 @@ async def choose_top_region_callback(update: Update, context: ContextTypes.DEFAU
 	user_data = context.user_data
 	user_details = user_data.get("details", {})
 	top_regions = user_data.get("top_regions", [])
-	reg_state = user_data.get("reg_state", RegState.USER_GROUP_CHOOSING)
-	region, i = find_obj_in_list(top_regions, "id", region_id)
+	reg_group = user_data.get("reg_group", RegState.USER_GROUP_CHOOSING)
+	region, i = find_obj_in_list(top_regions, "id", int(region_id))
 
 	if region:
 		selected_name: str = region["name"]
-		user_details["regions"][region_id] = selected_name
-		del user_data["top_regions"][i]
+		user_details['regions'][region_id] = selected_name
+		del top_regions[i]
 
-		if user_data["top_regions"]:
+		if top_regions:
 			buttons = generate_inline_keyboard(
-				user_data["top_regions"],
+				top_regions,
 				item_key="name",
 				callback_data="id",
 				prefix_callback_name="region_"
 			)
 			await query.edit_message_reply_markup(buttons)
 
-		await query.message.reply_text(
-			f'*{selected_name.upper()}* ☑️\n',
-			reply_markup=continue_reg_menu,
-		)
+		await add_new_region_message(query.message, context.bot_data, text=selected_name.upper())
 
-	return reg_state
+	return reg_group
 
 
 async def confirm_region_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
@@ -469,45 +486,44 @@ async def confirm_region_callback(update: Update, context: ContextTypes.DEFAULT_
 	user_data = context.user_data
 	user_details = user_data.get("details", {})
 	done_state = user_data.get("state", None)
-	reg_state = user_data.get("reg_state", RegState.USER_GROUP_CHOOSING)
+	reg_group = user_data.get("reg_group", RegState.USER_GROUP_CHOOSING)
+	print("region callback: ", user_details['regions'])
+
 	if done_state == "collect_location":
 		if button_data == 'no':
 			user_details['location'] = None
 			await query.edit_message_text("Укажите свой регион вручную")
 		else:
 			await query.message.delete()
-			if reg_state == RegState.SERVICE_GROUP_REGISTRATION:
+			if reg_group == RegState.SERVICE_GROUP:
 				return await service_group_questions(update, context)
-			elif reg_state == RegState.SUPPLIER_GROUP_REGISTRATION:
+			elif reg_group == RegState.SUPPLIER_GROUP:
 				return await supplier_group_questions(update, context)
 
 	if done_state == "collect_regions":
-		region_id: str = context.bot_data["new_region"]["id"]
-		region_name: str = context.bot_data["new_region"]["name"]
+		new_region: Dict = context.bot_data["new_region"]
+		region_name = new_region["name"]
+		region_id = new_region["id"]
 		await query.delete_message()
+
 		if button_data == 'yes':
-			if user_details['regions'].get(region_id, False):
-				message_text = f'*{region_name.upper()}* уже был выбран!\n'
-			else:
+			if not user_details['regions'].get(region_id):
 				user_details['regions'][region_id] = region_name
-				message_text = f'*{region_name.upper()}* ☑️\n\n'
+				del new_region
+				await add_new_region_message(query.message, context.bot_data, text=region_name.upper())
+			else:
+				await region_selected_warn_message(query.message, text=region_name.upper())
 		else:
-			message_text = 'Введите другой регион.'
+			await query.message.reply_text('Укажите другой регион.', reply_markup=continue_reg_menu)
 
-		if region_name is not None:
-			await query.message.reply_text(
-				message_text,
-				reply_markup=continue_reg_menu,
-			)
-
-	return reg_state
+	return reg_group
 
 
 # Обработчик нажатия на кнопку поделиться геопозицией
 async def get_location_callback(update: Update, context: CallbackContext) -> str:
 	user_data = context.user_data
 	user_details = user_data.get("details", {})
-	reg_state = user_data["reg_state"]
+	reg_group = user_data["reg_group"]
 
 	location = update.message.location
 	# Локация получена
@@ -519,9 +535,9 @@ async def get_location_callback(update: Update, context: CallbackContext) -> str
 			log.info(f"User {update.effective_user.full_name} shared his location: {location_text}")
 			await confirm_region_message(update.message, f'Ваш регион *{location_text.upper()}*')
 
-			if reg_state == RegState.SERVICE_GROUP_REGISTRATION:
+			if reg_group == RegState.SERVICE_GROUP:
 				return await service_group_questions(update, context)
-			elif reg_state == RegState.SUPPLIER_GROUP_REGISTRATION:
+			elif reg_group == RegState.SUPPLIER_GROUP:
 				return await supplier_group_questions(update, context)
 
 		else:
@@ -534,7 +550,7 @@ async def get_location_callback(update: Update, context: CallbackContext) -> str
 			"Введите регион вручную"
 		)
 
-	return reg_state
+	return reg_group
 
 
 # @send_action(ChatAction.TYPING)

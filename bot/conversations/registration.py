@@ -8,11 +8,13 @@ from telegram.ext import (
 
 from bot.bot_settings import CHANNEL_ID
 from bot.constants.messages import (
-	start_reg_message, welcome_start_message, interrupt_reg_message, yet_registered_message
+	start_reg_message, welcome_start_message, interrupt_reg_message, yet_registered_message, show_done_reg_message,
+	server_error_message
 )
 from bot.constants.patterns import (
 	CANCEL_REGISTRATION_PATTERN, CONTINUE_REGISTRATION_PATTERN, DONE_REGISTRATION_PATTERN, REGISTRATION_PATTERN
 )
+from bot.handlers.done import send_error_message_callback
 from bot.handlers.registration import (
 	invite_user_to_channel, create_start_link, success_join_callback,
 	choose_categories_callback, supplier_group_questions, service_group_questions,
@@ -26,17 +28,24 @@ from bot.utils import fetch_user_data
 
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	user = update.effective_user
+	user_data = context.user_data
 
-	#is_user_in_channel = await check_user_in_channel(CHANNEL_ID, user.id, context.bot)
-	data, token = await fetch_user_data(user.id)
+	# is_user_in_channel = await check_user_in_channel(CHANNEL_ID, user.id, context.bot)
+	res = await fetch_user_data(user.id)
+	data = res.get('data', None)
+	status_code = res.get('status_code', 500)
 
-	if data.get('user_id'):
+	if status_code == 200 and data.get('user_id'):
 		await yet_registered_message(update.message)
 		return ConversationHandler.END
 
-	context.user_data["token"] = token
-	context.user_data["state"] = None
-	context.user_data["details"] = {"user_id": user.id}
+	if status_code != 404:
+		await server_error_message(update.message, context, error_data=res)
+		return RegState.DONE
+
+	user_data["token"] = res.get("token", None)
+	user_data["state"] = None
+	user_data["details"] = {"user_id": user.id}
 	await start_reg_message(update.message)
 
 	return RegState.USER_GROUP_CHOOSING
@@ -46,32 +55,37 @@ async def end_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	user_data = context.user_data
 	user_details = user_data["details"]
 
-	if not await invite_user_to_channel(user_details, CHANNEL_ID, context.bot):
-		await welcome_start_message(update.message)
+	if "error" not in user_data:
+		# сохранение данных после регистрации в БД
+		token = user_data.get('token', None)
+		headers = {'Authorization': 'Token {}'.format(token)} if token else None
+		print('before save: ', user_details)
+		# TODO: добавить поле groups = []
+		user_details.update({
+			"group": max(user_details.get("groups", []), default=-1),
+			"categories": list(user_details["categories"].keys()),
+			"regions": list(user_details["regions"].keys()),
+		})
 
-	else:
-		await create_start_link(update, context)
+		res = await fetch_user_data('/create/', headers=headers, method='POST', data=user_details)
+		data = res.get("data", None)
+		print('after save: ', data)
 
-	# сохранение данных после регистрации в БД
-	token = user_data.get('token', None)
-	headers = {'Authorization': 'Token {}'.format(token)} if token else None
-	print('before save: ', user_details)
-	# TODO: добавить поле groups = []
-	user_details.update({
-		"groups": [user_details.get('group')],
-		"categories": list(user_details["categories"].keys()),
-		"regions": list(user_details["regions"].keys()),
-	})
+		if res.get('status_code', None) == 201:
+			await show_done_reg_message(update.message)
+			if not await invite_user_to_channel(user_details, CHANNEL_ID, context.bot):
+				await welcome_start_message(update.message)
 
-	data, _ = await fetch_user_data('/create/', headers=headers, method='POST', data=user_details)
-	print('after save: ', data)
+			else:
+				await create_start_link(update, context)
 
-	if data.get('status_code') == 201:
-		context.bot_data.clear()
-		del context.user_data["state"]
-		return ConversationHandler.END
+		else:
+			await server_error_message(update.message, context, error_data=res)
 
-	return RegState.DONE
+	context.bot_data.clear()
+	del user_data["state"]
+	user_data.pop("error", None)
+	return ConversationHandler.END
 
 
 async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -104,10 +118,10 @@ registration_dialog = ConversationHandler(
 	],
 	states={
 		RegState.USER_GROUP_CHOOSING: [
-			CallbackQueryHandler(service_group_questions, pattern=str(RegState.SERVICE_GROUP_REGISTRATION)),
-			CallbackQueryHandler(supplier_group_questions, pattern=str(RegState.SUPPLIER_GROUP_REGISTRATION)),
+			CallbackQueryHandler(service_group_questions, pattern=str(RegState.SERVICE_GROUP)),
+			CallbackQueryHandler(supplier_group_questions, pattern=str(RegState.SUPPLIER_GROUP)),
 		],
-		RegState.SERVICE_GROUP_REGISTRATION: [
+		RegState.SERVICE_GROUP: [
 			continue_reg_handler,
 			CallbackQueryHandler(choose_username_callback, pattern="^username|first_name|full_name$"),
 			CallbackQueryHandler(choose_top_region_callback, pattern=r'^region_\d+$'),
@@ -122,10 +136,10 @@ registration_dialog = ConversationHandler(
 				service_group_questions
 			),
 		],
-		RegState.SUPPLIER_GROUP_REGISTRATION: [
+		RegState.SUPPLIER_GROUP: [
 			continue_reg_handler,
 			CallbackQueryHandler(choose_top_region_callback, pattern=r'^region_\d+$'),
-			CallbackQueryHandler(choose_categories_callback, pattern=r'^\d+$'),
+			CallbackQueryHandler(choose_categories_callback, pattern=r'^category_\d+$'),
 			CallbackQueryHandler(confirm_region_callback, pattern=r'^yes|no$'),
 			MessageHandler(filters.LOCATION, get_location_callback),
 			MessageHandler(
@@ -145,6 +159,7 @@ registration_dialog = ConversationHandler(
 				end_registration
 			),
 			CallbackQueryHandler(success_join_callback, pattern="has_joined"),
+			CallbackQueryHandler(send_error_message_callback, pattern='error'),
 		],
 	},
 	fallbacks=[cancel_reg_handler],

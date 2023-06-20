@@ -9,7 +9,7 @@ from slugify import slugify
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton
 from telegram.ext import CommandHandler, filters, CallbackContext
 
-from bot.bot_settings import DATA_SERVER_URL
+from bot.bot_settings import SERVER_URL
 from bot.constants.api import OPENSTREETMAP_GEOCODE_URL
 
 
@@ -76,7 +76,7 @@ def allowed_roles(roles, channel_id=None):
 
 
 def build_menu(buttons: List, n_cols: int, header_buttons: Optional[bool] = None,
-			   footer_buttons: Optional[bool] = None):
+               footer_buttons: Optional[bool] = None):
 	menu = [buttons[i:i + n_cols] for i in range(0, len(buttons), n_cols)]
 	if header_buttons:
 		menu.insert(0, [header_buttons])
@@ -194,7 +194,6 @@ def update_inline_keyboard(
 		active_value: str,
 		button_type: str = "bold",
 ) -> InlineKeyboardMarkup:
-
 	new_inline_keyboard = []
 	for row in inline_keyboard:
 		new_row = []
@@ -252,6 +251,67 @@ def determine_greeting(hour: int) -> str:
 	else:
 		greeting = 'Добрый вечер'
 	return greeting
+
+
+def flatten_list(
+		lst: List[Union[str, List[str]]],
+		exclude: Optional[Union[str, List[str]]] = None,
+		delimiter: str = ''
+) -> str:
+	"""
+	Given a list of strings and lists of strings, returns a flattened string with the specified delimiter.
+	Args:
+		lst (List[Union[str, List[str]]]): A list of strings and lists of strings to flatten.
+		exclude (Optional[Union[str, List[str]]]): A string or list of strings to exclude from the flattened string.
+			Defaults to None.
+		delimiter (str): The delimiter to use between flattened strings. Defaults to ''.
+	Returns:
+		str: The flattened string.
+	"""
+	if not lst:
+		return ''
+	if not exclude:
+		exclude = []
+	if isinstance(exclude, str):
+		exclude = [exclude]
+	flattened = []
+	for item in lst:
+		if isinstance(item, list):
+			flattened.extend(flatten_list(item, exclude))
+		elif item not in exclude:
+			flattened.append(item)
+	return delimiter.join(flattened)
+
+
+def filter_list(
+		list_: List[Union[Dict, Any]],
+		filter_key: str = None,
+		filter_value: Any = None,
+		sort_key: str = None,
+		reverse: bool = False
+) -> List[Union[Dict, Any]]:
+	"""
+	Filter a list of dictionaries by a specified key and value, and then sort the resulting list based on a specified key and direction.
+	Sort a list of any other type of object while preserving unique values.
+	Args:
+		list_: The list to filter and sort.
+		filter_key: The key to filter by for dictionaries.
+		filter_value: The value or values to filter by for dictionaries.
+		sort_key: The key to sort by for dictionaries and other types of objects.
+		reverse: Whether to sort in reverse order.
+	Returns:
+		A new filtered and sorted list.
+	"""
+	if isinstance(list_[0], dict) and filter_key is not None:
+		if not isinstance(filter_value, list):
+			filter_value = [filter_value]
+		filtered_list = list(filter(lambda x: x.get(filter_key) in filter_value, list_))
+		if sort_key is not None:
+			filtered_list.sort(key=lambda x: x[sort_key], reverse=reverse)
+		return filtered_list
+	else:
+		sorted_list = sorted(set(list_), key=lambda x: x if isinstance(x, str) else str(x), reverse=reverse)
+		return sorted_list
 
 
 def fuzzy_compare(
@@ -320,7 +380,8 @@ def replace_double_slashes(url: str):
 	return re.sub(r'(?<!:)//+', '/', url)
 
 
-async def fetch(url, headers=None, params=None, data=None, method='GET', timeout=10):
+################################ API ################################
+async def fetch(url, headers=None, params=None, data=None, method='GET', timeout=10) -> Tuple:
 	async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=True) as session:
 		try:
 			async with session.request(method, url, headers=headers, params=params, json=data) as response:
@@ -346,7 +407,7 @@ async def fetch(url, headers=None, params=None, data=None, method='GET', timeout
 			error_code = error.__class__.__name__
 			error_message: str = error.args[0]
 
-		return None, error_code, error_message, None
+		return None, error_code, error_message, {}
 
 
 async def fetch_user_data(
@@ -356,25 +417,47 @@ async def fetch_user_data(
 		headers: Optional[Dict] = None,
 		data: Optional[Dict] = None
 ):
-	url = DATA_SERVER_URL or "http://localhost:8000"
+	url = SERVER_URL or "http://localhost:8000"
 	api_url = replace_double_slashes("{}/api/users/{}/".format(url, str(user_id)))
-	response, status_code, error, headers = await fetch(api_url, params=params, method=method, headers=headers, data=data)
-	token = None
+	response = await fetch(api_url, params=params, method=method, headers=headers, data=data)
+	data, status_code, error, headers = response
 
-	if error or not response:
+	if error or not data:
 		return {
-			'user_id': None,
+			"data": None,
 			'status_code': status_code,
-			'error': error
-		}, token
+			'error': error,
+			'url': api_url
+		}
 
-	if response:
-		response["status_code"] = status_code
+	return {
+		"data": data,
+		"status_code": status_code,
+		"token": headers.get('token', None),
+	}
 
-	if headers:
-		token = headers.get('token', None)
 
-	return response, token
+async def fetch_data(
+		endpoint: str,
+		params=None,
+		method: str = "GET",
+):
+	url = SERVER_URL or "http://localhost:8000"
+	api_url = replace_double_slashes(f"{url}/api/{endpoint}/")
+	data, status_code, error, _ = await fetch(api_url, params=params, method=method)
+
+	if error or not data:
+		return {
+			'data': [],
+			'status_code': status_code,
+			'error': error,
+			'url': api_url
+		}
+
+	return {
+		'data': data,
+		"status_code": status_code
+	}
 
 
 async def get_region_by_location(latitude: float, longitude: float) -> Optional[str]:
@@ -397,7 +480,8 @@ async def get_region_by_location(latitude: float, longitude: float) -> Optional[
 		"lat": latitude,
 	}
 
-	data = await fetch(OPENSTREETMAP_GEOCODE_URL, params=params)
+	res = await fetch(OPENSTREETMAP_GEOCODE_URL, params=params)
+	data = res[0]  # возьмем первый элемент кортежа
 
 	if data and "address" in data:
 		address = data["address"]
