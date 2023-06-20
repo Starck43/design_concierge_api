@@ -4,6 +4,7 @@ from bot.constants.keyboards import DESIGNER_KEYBOARD, DESIGNER_PROFILE_KEYBOARD
 
 
 class MenuState(Enum):
+	DONE_MENU: str = 'Завершить'
 	MAIN_MENU: str = 'Основное меню'
 	SUPPLIERS_REGISTER: str = DESIGNER_KEYBOARD[0][0]
 	SUPPLIER_CHOOSING: str = "Карточка организации"
