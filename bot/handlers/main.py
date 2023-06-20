@@ -8,13 +8,13 @@ from bot.constants.data import categories_list, suppliers_list
 from bot.constants.keyboards import SUPPLIER_LIST_KEYBOARD, SUPPLIER_DETAILS_KEYBOARD
 from bot.constants.menus import main_menu
 from bot.utils import generate_reply_keyboard, generate_inline_keyboard, filter_list, find_obj_in_list
+from bot.states.group import Group
 from bot.states.main import MenuState
-from api.models import Group
 
 
 async def main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	user_data = context.user_data
-	user_group = user_data["details"].get("group", Group.DESIGNER.value)
+	user_group = user_data["details"].get("group", -1)
 	keyboard = main_menu.get(user_group, None)
 	menu_markup = generate_reply_keyboard(keyboard)
 
@@ -41,7 +41,6 @@ async def designer_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
 		await update.message.reply_text(
 			f'*{message_text.upper()}*',
 			reply_markup=generate_reply_keyboard(user_data["current_keyboard"]),
-			parse_mode=ParseMode.MARKDOWN,
 		)
 
 		categories_inline_buttons = generate_inline_keyboard(
