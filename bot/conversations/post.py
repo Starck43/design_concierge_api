@@ -8,7 +8,7 @@ from bot.handlers.posts import create_new_post, cancel_post, send_post, process_
 from bot.states.post import PostState
 
 cancel_post_handler = MessageHandler(
-	filters.TEXT & filters.Regex(re.compile(CANCEL_POST_PATTERN, re.IGNORECASE)), cancel_post,
+	filters.TEXT & filters.Regex(re.compile(CANCEL_POST_PATTERN, re.I)), cancel_post,
 )
 
 post_dialog = ConversationHandler(
@@ -24,7 +24,7 @@ post_dialog = ConversationHandler(
 				process_post_photo
 			),
 			MessageHandler(
-				filters.TEXT & ~filters.COMMAND & ~filters.Regex(re.compile(CANCEL_POST_PATTERN, re.IGNORECASE)),
+				filters.TEXT & ~filters.COMMAND & ~filters.Regex(re.compile(CANCEL_POST_PATTERN, re.I)),
 				process_post_text
 			),
 		],

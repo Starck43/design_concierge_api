@@ -1,13 +1,16 @@
 from django.core import exceptions
 from django.db import models
+from django.db.models import Q, ForeignKey, ManyToOneRel, ManyToManyRel, OneToOneRel
 from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rate, Designer, Region
-from .serializers import (CategorySerializer, UserSerializer, RateSerializer, RegionSerializer)
+from api.models import Category, User, Rate, Region
+from .serializers import (
+	CategorySerializer, UserListSerializer, RateSerializer, RegionSerializer, UserDetailSerializer
+)
 
 
 class RegionList(generics.ListAPIView):
@@ -26,11 +29,27 @@ class CategoryList(generics.ListAPIView):
 
 	def get_queryset(self):
 		queryset = super().get_queryset()
-		group = self.request.query_params.get('group')
+		groups = self.request.query_params.getlist('group')
+		related_users = self.request.query_params.get('related_users')
+		region = self.request.query_params.get('region')
 
-		if group:
-			groups = list(map(int, group.split(',')))
-			queryset = queryset.filter(group__in=groups)
+		# Check if any of the parameters are present
+		if groups or related_users or region:
+			# Create an empty Q object to hold the filters
+			q = Q()
+
+			if groups:
+				groups = list(map(int, groups))
+				q &= Q(group__in=groups)
+
+			if related_users:
+				users_filter = Q(users__isnull=False)
+				if region:
+					users_filter &= Q(user_region_id=region)
+				q &= users_filter
+
+			# Apply the filters to the queryset
+			queryset = queryset.filter(q).distinct()
 
 		return queryset
 
@@ -42,41 +61,90 @@ class CategoryDetail(generics.RetrieveAPIView):
 
 class UserList(generics.ListAPIView):
 	queryset = User.objects.all()
-	serializer_class = UserSerializer
+	serializer_class = UserListSerializer
 
 	def get_queryset(self):
 		queryset = super().get_queryset()
 		category = self.request.query_params.get('category')
-		group = self.request.query_params.get('group')
+		groups = self.request.query_params.getlist('group')
 
 		if category:
 			queryset = queryset.filter(categories__id=category)
 
-		if group:
-			groups = list(map(int, group.split(',')))
-			queryset = queryset.filter(groups__code__in=groups)
+		if groups:
+			groups = list(map(int, groups))
+			queryset = queryset.filter(categories__group__in=groups)
 
-		return queryset
+		return queryset.order_by('-total_rate', 'username')
+
+	def get(self, request, *args, **kwargs):
+		id = request.query_params.get('id')
+		user_id = request.query_params.get('user_id')
+		is_rated = request.query_params.get('is_rated')
+		params = {}
+		if id:
+			params['id'] = id
+		if user_id:
+			params['user_id'] = user_id
+
+		if params:
+			try:
+				user = User.objects.get(**params)
+				if is_rated:
+					if Rate.objects.filter(author=user).exists():
+						user.has_given_rating = True
+					else:
+						user.has_given_rating = False
+
+				serializer = UserDetailSerializer(user)
+				return Response(serializer.data)
+
+			except User.DoesNotExist:
+				return Response(status=status.HTTP_404_NOT_FOUND)
+
+		else:
+			return super().get(request, *args, **kwargs)
+
+	def get_serializer_context(self):
+		context = super().get_serializer_context()
+		context['category'] = self.request.query_params.get('category', None)
+		return context
 
 
 class UserDetail(APIView):
-	lookup_field = 'user_id'
+	def get_user(self, pk):
+		user_id = self.request.query_params.get('user_id')
 
-	def get_user(self, user_id):
 		try:
-			user = User.objects.get(user_id=user_id)
-			print(user)
-			return user
+			query = {"id": pk}
+			if user_id:
+				query.update({"user_id": user_id})
+
+			return User.objects.get(**query)
+
 		except User.DoesNotExist:
 			return Response(status=status.HTTP_404_NOT_FOUND)
+
 		except Exception:
 			return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-	def get(self, request, user_id=None):
-		user = self.get_user(user_id)
+	def get(self, request, pk=None):
+		user = self.get_user(pk)
+		related_designer_id = request.query_params.get('related_user')
+		context = {}
+
 		if not isinstance(user, User):
 			return user
-		serializer = UserSerializer(user)
+
+		if related_designer_id:
+			try:
+				# получим по id дизайнера и привяжем к пользователю рейтинг дизайнера, если он есть
+				designer = User.objects.get(id=related_designer_id)
+				context = {'designer': designer}
+			except User.DoesNotExist:
+				pass
+
+		serializer = UserDetailSerializer(user, context=context)
 		token = user.get_token()
 		headers = {'token': token}
 		return Response(serializer.data, status=status.HTTP_200_OK, headers=headers)
@@ -85,52 +153,54 @@ class UserDetail(APIView):
 		if not request.path.endswith('/create/'):
 			return Response(status=status.HTTP_400_BAD_REQUEST)
 
-		serializer = UserSerializer(data=request.data)
+		serializer = UserDetailSerializer(data=request.data)
+
 		if serializer.is_valid():
 			serializer.save()
 			return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-	def patch(self, request, user_id):
-		user = self.get_user(user_id)
+	def patch(self, request, pk):
+		user = self.get_user(pk)
 		if not isinstance(user, User):
 			return user
-		serializer = UserSerializer(user, data=request.data, partial=True)
+		serializer = UserDetailSerializer(user, data=request.data, partial=True)
 		if serializer.is_valid():
 			serializer.save()
 			return Response(serializer.data, status=status.HTTP_200_OK)
 		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-	def delete(self, request, user_id):
-		user = self.get_user(user_id)
+	def delete(self, request, pk):
+		user = self.get_user(pk)
 		if not isinstance(user, User):
 			return user
 		user.delete()
 		return Response(status=status.HTTP_204_NO_CONTENT)
-	
 
-class UpdateUsersRates(APIView):
+
+class UpdateRates(APIView):
 	# Использовать вместе с токеном в заголовке запроса
 	# permission_classes = (IsAuthenticated,)
+	lookup_field = 'user_id'
 
 	def post(self, request, user_id):
-		designer = get_object_or_404(Designer, user_id=user_id)
-		rates = request.data
-		avg_rates = []
+		designer = get_object_or_404(User, user_id=user_id)
+		receiver_rates = request.data
+		user_ratings = []
 
-		for rate in rates:
-			rate['author'] = designer.id
-			rate['receiver'] = rate.get('id', None)
+		for rate in receiver_rates:
+			receiver_id = rate.pop("receiver_id", None)
+			# Если пользователь выставляет оценки самому себе, то вернем код 304
+			if receiver_id == designer.id:
+				return Response(data=[], status=status.HTTP_304_NOT_MODIFIED)
 
-			if rate['receiver'] is not None:
+			try:
 				# Если рейтинг для этого автора и получателя уже существует, то обновим его
-				try:
-					rating = Rate.objects.get(author=rate['author'], receiver_id=rate['receiver'])
-					serializer = RateSerializer(rating, data=rate, partial=True)
-				except Rate.DoesNotExist:
-					serializer = RateSerializer(data=rate, partial=True)
-			else:
+				rating = Rate.objects.get(author_id=designer.id, receiver_id=receiver_id)
+				serializer = RateSerializer(rating, data=rate, partial=True)
+			except Rate.DoesNotExist:
+				rate.update({"author": designer.id, "receiver": receiver_id})
 				serializer = RateSerializer(data=rate, partial=True)
 
 			try:
@@ -140,11 +210,13 @@ class UpdateUsersRates(APIView):
 			rating = serializer.save()
 
 			# Получим обновленный рейтинг и вернем его ответом
-			avg_rates.append({
-				"id": rate['receiver'],
-				"rating": rating.calculate_average_rate(),
+			user_ratings.append({
+				"id": receiver_id,
+				"username": rating.receiver.username,
+				"author_rate": rating.calculate_average_rate(),
+				"total_rate": rating.receiver.total_rate
 			})
-		return Response(data=avg_rates, status=status.HTTP_200_OK)
+		return Response(data=user_ratings, status=status.HTTP_201_CREATED)
 
 
 # Получение списка вопросов для выставления рейтинга
@@ -173,3 +245,14 @@ class RateQuestionView(APIView):
 			required_fields_dict,
 			all_fields_dict,
 		])
+
+
+class UserFieldNamesView(APIView):
+	""" Чтение названий полей модели User"""
+	def get(self, request, *args, **kwargs):
+		excludes = ["id", "user_id", "total_rate", "created_date", "token"]
+		field_names = {
+			f.name: f.verbose_name or f.name for f in User._meta.get_fields()
+			if f.name not in excludes and not isinstance(f, (ManyToOneRel, ManyToManyRel, OneToOneRel))
+		}
+		return Response(field_names)

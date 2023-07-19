@@ -4,34 +4,33 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import BACK_KEYBOARD
-from bot.constants.menus import main_menu
+from bot.constants.menus import main_menu, back_menu
 from bot.utils import fetch, generate_inline_keyboard, generate_reply_keyboard
 from bot.states.main import MenuState
 
 
-async def services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+async def services_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	user_data = context.user_data
-	user_group = user_data["details"]["group"]
+	user_group = user_data["group"]
+
+	user_data["previous_state"] = user_data.get("current_state")
+	user_data["current_state"] = MenuState.SERVICES
+	user_data["current_keyboard"] = main_menu[user_group]
 
 	# TODO: Получить список сервисов из БД
 	user_data["services_list"] = ['услуга 1', 'услуга 2', 'услуга 3']
 	services_list = user_data["services_list"]
 
-	buttons = generate_inline_keyboard(services_list)
-
 	await update.message.reply_text(
 		update.message.text,
-		reply_markup=generate_reply_keyboard([BACK_KEYBOARD])
+		reply_markup=back_menu
 	)
 
+	buttons = generate_inline_keyboard(services_list)
 	await update.message.reply_text(
 		f'Выберите услугу:',
 		reply_markup=buttons
 	)
-	current_state = user_data.get("current_state")
-	user_data["previous_state"] = current_state
-	user_data["current_state"] = MenuState.SERVICES
-	user_data["current_keyboard"] = main_menu.get(user_group, None)
 
 	return user_data["current_state"]
 

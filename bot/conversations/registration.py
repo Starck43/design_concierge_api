@@ -6,20 +6,16 @@ from telegram.ext import (
 	CommandHandler, MessageHandler, ConversationHandler, CallbackQueryHandler, filters, ContextTypes
 )
 
-from bot.bot_settings import CHANNEL_ID
-from bot.constants.messages import (
-	start_reg_message, welcome_start_message, interrupt_reg_message, yet_registered_message, show_done_reg_message,
-	server_error_message
-)
-from bot.constants.patterns import (
-	CANCEL_REGISTRATION_PATTERN, CONTINUE_REGISTRATION_PATTERN, DONE_REGISTRATION_PATTERN, REGISTRATION_PATTERN
-)
-from bot.handlers.done import send_error_message_callback
+from bot.constants.messages import introduce_reg_message, yet_registered_message
+from bot.constants.patterns import (CANCEL_PATTERN, REGISTRATION_PATTERN, DONE_PATTERN)
+from bot.handlers.common import catch_server_error, load_user_field_names, load_regions
 from bot.handlers.registration import (
-	invite_user_to_channel, create_start_link, success_join_callback,
-	choose_categories_callback, supplier_group_questions, service_group_questions,
-	get_location_callback, choose_username_callback, continue_reg_choice,
-	confirm_region_callback, choose_top_region_callback
+	success_join_callback, choose_categories_callback, choose_telegram_username_callback,
+	confirm_region_callback, choose_top_region_callback,
+	interrupt_registration_callback, approve_verification_code_callback, end_registration,
+	cancel_registration_choice, introduce_callback, name_choice, work_experience_choice, categories_choice,
+	regions_choice, choose_segment_callback, segment_choice, socials_choice, address_choice,
+	input_phone, repeat_input_phone_callback
 )
 from bot.logger import log
 from bot.states.registration import RegState
@@ -28,139 +24,134 @@ from bot.utils import fetch_user_data
 
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	user = update.effective_user
+
+	data = await load_user_field_names(update.message, context)
+	if not data:
+		return RegState.DONE
+
+	context.bot_data.setdefault("user_field_names", data)
+	chat_data = context.chat_data
 	user_data = context.user_data
 
-	# is_user_in_channel = await check_user_in_channel(CHANNEL_ID, user.id, context.bot)
-	res = await fetch_user_data(user.id)
-	data = res.get('data', None)
+	# сохраним весь список регионов и список популярных регионов
+	chat_data["all_regions"], chat_data["top_regions"] = await load_regions(update.message, context)
+	if not chat_data["all_regions"]:
+		return RegState.DONE
+
+	res = await fetch_user_data(params={"user_id": user.id})
 	status_code = res.get('status_code', 500)
 
-	if status_code == 200 and data.get('user_id'):
+	if status_code == 200 and res["data"].get('user_id'):
+		user_data["details"] = res["data"]
 		await yet_registered_message(update.message)
 		return ConversationHandler.END
 
 	if status_code != 404:
-		await server_error_message(update.message, context, error_data=res)
+		await catch_server_error(update.message, context, error_data=res)
 		return RegState.DONE
 
+	log.info(f'User {user.full_name} (ID:{user.id}) started registration.')
+	await introduce_reg_message(update.message)
+
 	user_data["token"] = res.get("token", None)
-	user_data["state"] = None
 	user_data["details"] = {"user_id": user.id}
-	await start_reg_message(update.message)
+	chat_data["status"] = "registration"
+	chat_data["chat_id"] = update.effective_chat.id
 
-	return RegState.USER_GROUP_CHOOSING
-
-
-async def end_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	user_data = context.user_data
-	user_details = user_data["details"]
-
-	if "error" not in user_data:
-		# сохранение данных после регистрации в БД
-		token = user_data.get('token', None)
-		headers = {'Authorization': 'Token {}'.format(token)} if token else None
-		print('before save: ', user_details)
-		# TODO: добавить поле groups = []
-		user_details.update({
-			"group": max(user_details.get("groups", []), default=-1),
-			"categories": list(user_details["categories"].keys()),
-			"regions": list(user_details["regions"].keys()),
-		})
-
-		res = await fetch_user_data('/create/', headers=headers, method='POST', data=user_details)
-		data = res.get("data", None)
-		print('after save: ', data)
-
-		if res.get('status_code', None) == 201:
-			await show_done_reg_message(update.message)
-			if not await invite_user_to_channel(user_details, CHANNEL_ID, context.bot):
-				await welcome_start_message(update.message)
-
-			else:
-				await create_start_link(update, context)
-
-		else:
-			await server_error_message(update.message, context, error_data=res)
-
-	context.bot_data.clear()
-	del user_data["state"]
-	user_data.pop("error", None)
-	return ConversationHandler.END
-
-
-async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-	log.info(f"User {update.effective_user.full_name} interrupted registration")
-
-	await interrupt_reg_message(update.message)
-
-	context.bot_data.clear()
-	context.user_data.clear()
-
-	return ConversationHandler.END
+	return RegState.SELECT_USER_GROUP
 
 
 cancel_reg_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(CANCEL_REGISTRATION_PATTERN, re.IGNORECASE)),
-	cancel_registration,
-)
-
-continue_reg_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(CONTINUE_REGISTRATION_PATTERN, re.IGNORECASE)),
-	continue_reg_choice,
+	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(CANCEL_PATTERN, re.I)),
+	cancel_registration_choice,
 )
 
 registration_dialog = ConversationHandler(
 	entry_points=[
-		CommandHandler(['register'], start_registration),
+		CommandHandler('register', start_registration),
 		MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(
-			re.compile(REGISTRATION_PATTERN, re.IGNORECASE)
+			re.compile(REGISTRATION_PATTERN, re.I)
 		), start_registration),
 	],
 	states={
-		RegState.USER_GROUP_CHOOSING: [
-			CallbackQueryHandler(service_group_questions, pattern=str(RegState.SERVICE_GROUP)),
-			CallbackQueryHandler(supplier_group_questions, pattern=str(RegState.SUPPLIER_GROUP)),
+		RegState.SELECT_USER_GROUP: [
+			CallbackQueryHandler(introduce_callback, pattern=r"^0|1$"),
 		],
-		RegState.SERVICE_GROUP: [
-			continue_reg_handler,
-			CallbackQueryHandler(choose_username_callback, pattern="^username|first_name|full_name$"),
-			CallbackQueryHandler(choose_top_region_callback, pattern=r'^region_\d+$'),
-			CallbackQueryHandler(choose_categories_callback, pattern=r'^\d+$'),
-			CallbackQueryHandler(confirm_region_callback, pattern=r'^yes|no$'),
-			MessageHandler(filters.LOCATION, get_location_callback),
+		RegState.INPUT_NAME: [
 			MessageHandler(
-				filters.TEXT & ~filters.COMMAND & (
-						~filters.Regex(re.compile(CANCEL_REGISTRATION_PATTERN, re.IGNORECASE))
-						| filters.Regex(re.compile(CONTINUE_REGISTRATION_PATTERN, re.IGNORECASE))
-				),
-				service_group_questions
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				name_choice
+			),
+			CallbackQueryHandler(choose_telegram_username_callback, pattern="^username|first_name|full_name$"),
+		],
+		RegState.SELECT_CATEGORIES: [
+			MessageHandler(
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				categories_choice
+			),
+			CallbackQueryHandler(choose_categories_callback, pattern=r'^category_\d+$'),
+		],
+		RegState.INPUT_WORK_EXPERIENCE: [
+			MessageHandler(
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				work_experience_choice
 			),
 		],
-		RegState.SUPPLIER_GROUP: [
-			continue_reg_handler,
-			CallbackQueryHandler(choose_top_region_callback, pattern=r'^region_\d+$'),
-			CallbackQueryHandler(choose_categories_callback, pattern=r'^category_\d+$'),
-			CallbackQueryHandler(confirm_region_callback, pattern=r'^yes|no$'),
-			MessageHandler(filters.LOCATION, get_location_callback),
+		RegState.SELECT_REGIONS: [
 			MessageHandler(
-				filters.TEXT & ~filters.COMMAND & (
-						~filters.Regex(re.compile(CANCEL_REGISTRATION_PATTERN, re.IGNORECASE))
-						| filters.Regex(re.compile(CONTINUE_REGISTRATION_PATTERN, re.IGNORECASE))
-				),
-				supplier_group_questions
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				regions_choice
+			),
+			CallbackQueryHandler(confirm_region_callback, pattern=r'^choose_region_(yes|no)$'),
+			CallbackQueryHandler(choose_top_region_callback, pattern=r'^region_\d+$'),
+		],
+		RegState.SELECT_SEGMENT: [
+			MessageHandler(
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				segment_choice
+			),
+			CallbackQueryHandler(choose_segment_callback, pattern=r'^segment_\d+$'),
+		],
+		RegState.SELECT_SOCIALS: [
+			MessageHandler(
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				socials_choice
+			),
+		],
+		RegState.SELECT_ADDRESS: [
+			MessageHandler(
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				address_choice
+			),
+		],
+		RegState.VERIFICATION: [
+			MessageHandler(
+				filters.CONTACT |
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				input_phone
+			),
+			CallbackQueryHandler(approve_verification_code_callback, pattern=r'^approve|cancel'),
+			CallbackQueryHandler(repeat_input_phone_callback, pattern=r'^input_phone$'),
+		],
+		RegState.SUBMIT_REGISTRATION: [
+			MessageHandler(
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				end_registration
 			),
 		],
 		RegState.DONE: [
 			MessageHandler(
 				filters.TEXT & ~filters.COMMAND & (
-						~filters.Regex(re.compile(CANCEL_REGISTRATION_PATTERN, re.IGNORECASE))
-						& filters.Regex(re.compile(DONE_REGISTRATION_PATTERN, re.IGNORECASE))
+						filters.Regex(re.compile(CANCEL_PATTERN, re.I))
+						| filters.Regex(re.compile(DONE_PATTERN, re.I))
 				),
 				end_registration
 			),
-			CallbackQueryHandler(success_join_callback, pattern="has_joined"),
-			CallbackQueryHandler(send_error_message_callback, pattern='error'),
 		],
 	},
-	fallbacks=[cancel_reg_handler],
+	fallbacks=[
+		CallbackQueryHandler(interrupt_registration_callback),
+		CallbackQueryHandler(success_join_callback, pattern="share_link"),
+		cancel_reg_handler,
+	],
 )

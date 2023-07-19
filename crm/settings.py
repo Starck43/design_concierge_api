@@ -10,7 +10,7 @@ env.read_env(path.join(BASE_DIR, '.env'))
 
 SECRET_KEY = env('SECRET_KEY')
 
-DEBUG = env.bool('DEBUG', False)
+DEBUG = env.bool('DEBUG', True)
 
 ALLOWED_HOSTS = ['*']  # env('ALLOWED_HOSTS', list, ['*'])
 
@@ -29,7 +29,6 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework.authtoken",
     "api",
-    "bot",
 ]
 
 MIDDLEWARE = [

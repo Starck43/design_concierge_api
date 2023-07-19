@@ -1,74 +1,120 @@
-from .models import Region
+from rest_framework import serializers
 
 from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rate, Feedback
-from rest_framework import serializers
+from .models import Region, Country
 
 
 class UserGroupSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = UserGroup
-		fields = ('code',)
+		fields = ['code']
+
+
+class CountrySerializer(serializers.ModelSerializer):
+	class Meta:
+		model = Country
+		fields = ['name', 'code']
+
+
+class RegionSerializer(serializers.ModelSerializer):
+	country = CountrySerializer()
+
+	class Meta:
+		model = Region
+		fields = ['id', 'name', 'country', 'in_top']
+
+	def to_representation(self, instance):
+		data = super().to_representation(instance)
+		# Получаем объект страны и сериализуем его, используя to_field
+		country = instance.country
+		data['country'] = CountrySerializer(country).data
+		return data
 
 
 class CategorySerializer(serializers.ModelSerializer):
 	class Meta:
 		model = Category
-		fields = '__all__'
+		fields = ['id', 'name', 'group']
 
 
-class UserSerializer(serializers.ModelSerializer):
-	groups = serializers.SerializerMethodField() # только на чтение для get-запросов
-
-	represented_regions = serializers.PrimaryKeyRelatedField(
-		many=True,
-		queryset=Region.objects.all(),
-		required=False
-	)
-	categories = serializers.PrimaryKeyRelatedField(
-		many=True,
-		queryset=Category.objects.all(),
-		required=False
-	)
+class UserListSerializer(serializers.ModelSerializer):
+	groups = serializers.SerializerMethodField()
 
 	class Meta:
 		model = User
-		#fields = '__all__'
-		exclude = ('token',)
+		fields = ['id', 'username', 'groups', 'total_rate']
+		ordering = ['-total_rate']
 
 	def get_groups(self, obj):
-		# return list(obj.groups.values_list('code', flat=True))
 		return list(obj.categories.values_list('group', flat=True).distinct())
 
+	def to_representation(self, instance):
+		representation = super().to_representation(instance)
+		representation['total_rate'] = instance.total_rate if instance.total_rate else None
+		category = self.context.get('category')
+		if category:
+			representation['category'] = int(category)
+		return representation
+
+
+class UserDetailSerializer(UserListSerializer):
+	categories = CategorySerializer(many=True, read_only=True, partial=True)
+	regions = RegionSerializer(many=True, read_only=True, partial=True)
+	main_region = RegionSerializer(many=False, read_only=True, partial=True)
+	average_rating = serializers.SerializerMethodField()
+	designer_rating = serializers.SerializerMethodField()
+	has_given_rating = serializers.BooleanField(read_only=True)
+
+	class Meta:
+		model = User
+		# fields = '__all__'
+		exclude = ('token',)
+
+	def format_rating(self, rates: dict):
+		if rates is None:
+			return {}
+		formatted_rates = {'receiver_id': self.instance.id}
+		for field_name, rate in rates.items():
+			field = field_name.rstrip('_avg')
+			formatted_rates[field] = rate
+
+		return formatted_rates
+
+	def get_average_rating(self, obj):
+		avg_rating = obj.calculate_average_rating()
+		return self.format_rating(avg_rating)
+
+	def get_designer_rating(self, obj):
+		designer = self.context.get('designer')
+		if designer:
+			designer_rating = obj.calculate_average_rating(designer)
+			return self.format_rating(designer_rating)
+		return {}
+
 	def to_internal_value(self, data):
-		groups_data = data.pop('groups', [])
 		validated_data = super().to_internal_value(data)
-		if groups_data:
-			groups_data = list(map(int, groups_data))
-			user_groups = UserGroup.objects.filter(code__in=groups_data).values_list('code', 'id')
-			user_groups_dict = dict(user_groups)
-			validated_data['groups'] = [user_groups_dict[int(code)] for code in groups_data]
+		# Преобразование списка категорий в список объектов Category
+		validated_data['categories'] = Category.objects.filter(id__in=data.get('categories', []))
+		# Преобразование списка регионов в список объектов Region
+		validated_data['regions'] = Region.objects.filter(id__in=data.get('regions', []))
 
 		return validated_data
 
 	def create(self, validated_data):
-		groups = validated_data.pop('groups', [])
 		categories = validated_data.pop('categories', [])
-		regions = validated_data.pop('regions', [])  # Извлекаем regions из validated_data
+		regions = validated_data.pop('regions', [])
 		user = User.objects.create(**validated_data)
-		user.groups.set(groups)
 		user.categories.set(categories)
-		user.regions.set(regions)  # Используем метод set() для установки значений regions
+		user.regions.set(regions)
 		return user
 
 	def update(self, instance, validated_data):
-		groups = validated_data.pop('groups', None)
 		categories = validated_data.pop('categories', None)
 		regions = validated_data.pop('regions', None)  # Извлекаем regions из validated_data
-		if groups is not None:
-			instance.groups.set(groups)
-		if categories is not None:
+
+		if categories:
 			instance.categories.set(categories)
-		if regions is not None:
+		if regions:
 			instance.regions.set(regions)  # Используем метод set() для обновления значений regions
 		return super().update(instance, validated_data)
 
@@ -107,9 +153,3 @@ class FeedbackSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = Feedback
 		fields = '__all__'
-
-
-class RegionSerializer(serializers.ModelSerializer):
-	class Meta:
-		model = Region
-		fields = ('id', 'name', 'in_top',)

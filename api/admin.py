@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from bot.constants.data import categories_list, users_list
 from bot.constants.regions import ALL_REGIONS
+from .forms import UserForm
 
 from .models import (
 	UserGroup,
@@ -55,12 +56,6 @@ class CountryAdmin(admin.ModelAdmin):
 	inlines = [RegionInline]
 
 
-@admin.register(Designer)
-class DesignerAdmin(admin.ModelAdmin):
-	readonly_fields = ["user_id"]
-	inlines = [FavouriteInline]
-
-
 @admin.register(Region)
 class RegionAdmin(admin.ModelAdmin):
 	list_display = ['name', 'country', 'in_top']
@@ -107,7 +102,18 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
+	form = UserForm
+	inlines = [RateInline]
+	search_fields = ['name', 'username']
 	actions = ['import_users']
+	readonly_fields = ['total_rate']
+	list_display = ['id', 'user_id', 'username', 'access', 'symbol_rate']
+	list_display_links = ['username']
+
+	def symbol_rate(self, obj):
+		return f'{obj.total_rate} ⭐' if obj.total_rate else None
+
+	symbol_rate.short_description = '️ Рейтинг'
 
 	def get_object(self, request, object_id, from_field=None):
 		obj = super().get_object(request, object_id, from_field)
@@ -118,7 +124,6 @@ class UserAdmin(admin.ModelAdmin):
 		for data in users_list:
 			if data['id'] >= 0:
 				category = Category.objects.get(pk=data['category'])
-				group = UserGroup.objects.get(code=data['groups'])
 				region = Region.objects.get(osm_id=115100)
 				user = User(
 					username=data['name'],
@@ -127,16 +132,20 @@ class UserAdmin(admin.ModelAdmin):
 				)
 				user.save()
 				user.categories.add(category)
-				user.groups.add(group)
-				user.represented_regions.add(region)
+				user.regions.add(region)
 		self.message_user(request, "Список импортирован успешно!")
 
 	import_users.short_description = "Импорт списка объектов из констант"
 
 
+@admin.register(Rate)
+class RateAdmin(admin.ModelAdmin):
+	list_display = ['receiver', 'author']
+	list_display_links = ['receiver']
+
+
 admin.site.register(Category, CategoryAdmin)
-admin.site.register(Outsourcer)
-admin.site.register(Supplier)
+# admin.site.register(Outsourcer)
+# admin.site.register(Supplier)
 admin.site.register(Favourite)
-admin.site.register(Rate)
 admin.site.register(Feedback)

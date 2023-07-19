@@ -11,7 +11,7 @@ from bot.states.main import MenuState
 
 async def cooperation_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	user_data = context.user_data
-	user_group = user_data["details"]["group"]
+	user_group = user_data["group"]
 
 	# TODO: Получить список уведомлений от дизайнеров
 	user_data["coop_request_list"] = ['заявка 1', 'заявка 2', 'заявка 3']

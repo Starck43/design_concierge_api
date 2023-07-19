@@ -20,8 +20,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # Создаем и запускаем отдельный поток для запуска Django сервера
-    # django_thread = Thread(target=main)
-    # django_thread.start()
-    # # Запускаем телеграм-бот
-    # telegram_bot_main().run_polling()
