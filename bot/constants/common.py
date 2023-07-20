@@ -7,12 +7,9 @@ HELP_CONTEXT = (
 TARIFF_LIST = ["Базовый", "Расширенный", "Премиум"]
 
 PROFILE_FIELD_SET = [
-	["username", "categories", "main_region", "regions", ],
+	["username", "categories", "main_region", "socials_url", "regions", ],
 	["username", "categories", "main_region", "regions", "description", "address", "socials_url", "site_url"],
 	["username", "name", "segment", "categories", "main_region", "regions", "description", "address", "socials_url", "site_url"],
 ]
 
-REGISTRATION_FIELD_SET = [
-	["username", "name", "categories", "business_start_year", "main_region", "regions", "socials_url"],
-	["username", "name", "categories", "business_start_year", "main_region", "regions", "segment", "address"],
-]
+JOB_STATUS = ["услуга приостановлена", "в поиске", "в работе", "услуга выполнена", "истек срок ожидания"]
