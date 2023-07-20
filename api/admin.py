@@ -15,7 +15,7 @@ from .models import (
 	Supplier,
 	Favourite,
 	Rate,
-	Feedback,
+	Feedback, File,
 )
 
 
@@ -44,6 +44,11 @@ class RateInline(admin.TabularInline):
 	model = Rate
 	extra = 1
 	fk_name = "author"
+
+
+class FileInlineAdmin(admin.TabularInline):
+	model = File
+	extra = 1
 
 
 @admin.register(UserGroup)
@@ -103,7 +108,7 @@ class CategoryAdmin(admin.ModelAdmin):
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
 	form = UserForm
-	inlines = [RateInline]
+	inlines = [FileInlineAdmin]
 	search_fields = ['name', 'username']
 	actions = ['import_users']
 	readonly_fields = ['total_rate']

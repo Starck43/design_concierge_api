@@ -7,6 +7,8 @@ from django.db import models
 from django.db.models import Q, Avg, F, FloatField, Case, When
 from rest_framework.authtoken.models import Token
 
+from api.logic import user_directory_path, MediaFileStorage
+
 
 def phone_regex(value):
 	pattern = r'^(\+?\d{1,3})?[\s-]?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}$'
@@ -252,7 +254,7 @@ class Supplier(User):
 
 class Favourite(models.Model):
 	designer = models.ForeignKey(
-		Designer, verbose_name='Дизайнер/архитектор', on_delete=models.CASCADE, related_name='favourites'
+		User, verbose_name='Дизайнер/архитектор', on_delete=models.CASCADE, related_name='favourites'
 	)
 	supplier = models.ForeignKey(
 		User,
@@ -318,7 +320,7 @@ class Rate(models.Model):
 
 class Feedback(models.Model):
 	text = models.TextField('Отзыв от дизайнера')
-	author = models.ForeignKey(Designer, verbose_name='Автор', on_delete=models.CASCADE, related_name='left_feedback')
+	author = models.ForeignKey(User, verbose_name='Автор', on_delete=models.CASCADE, related_name='left_feedback')
 	receiver = models.ForeignKey(
 		User,
 		verbose_name='Получатель',
@@ -334,3 +336,9 @@ class Feedback(models.Model):
 
 	def __str__(self):
 		return f'Отзыв о поставщике {self.receiver}'
+
+
+# TODO: Реализовать удаление файлов с диска
+class File(models.Model):
+	user = models.ForeignKey(User, verbose_name='Автор', on_delete=models.CASCADE, related_name='files')
+	file = models.FileField(upload_to=user_directory_path, storage=MediaFileStorage(), blank=True)
