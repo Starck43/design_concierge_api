@@ -6,7 +6,7 @@ from bot.bot_settings import SERVER_URL, ADMIN_CHAT_ID
 from bot.constants.messages import check_file_size_message
 from bot.handlers.common import delete_messages_by_key
 from bot.logger import log
-from bot.utils import generate_inline_keyboard, replace_double_slashes
+from bot.utils import generate_inline_keyboard, replace_double_slashes, fetch, fetch_user_data
 
 
 async def share_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -59,9 +59,12 @@ async def upload_files_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	query = update.callback_query
 
 	user = query.from_user
-	files = context.chat_data['upload_files']
+	files = context.chat_data.get('upload_files')
+	if not files:
+		await query.message.reply_text(f'*Необходимо добавить файлы для отправки!*')
+		return
+
 	file_ids = files['photo'] + files['document']
-	error_file_list = []
 	url_list = []
 
 	for file_id in file_ids:
@@ -69,35 +72,38 @@ async def upload_files_callback(update: Update, context: ContextTypes.DEFAULT_TY
 		file_path = file_obj.file_path
 		url_list.append(file_path)
 
-	# TODO: Доделать api для выгрузки файлов на сервер
-	api_url = replace_double_slashes(f'{SERVER_URL}/api/upload')
-	response = requests.post(api_url, files={'file': url_list}) # await fetch(api_url, data={'files': url_list}, method="POST")
+	res = await fetch_user_data(user.id, 'upload/', data={'files': url_list}, method="POST")
+	if res["status_code"] == 201:
+		message = res["data"]["message"]
+		saved_files = res["data"]["saved_files"]
+		if saved_files:
+			post_message = 'После рассмотрения Вы получите ответ.'
+		else:
+			post_message = 'Рекомендуем повторить отправку файлов еще раз или дождитесь ответа от администратора.'
 
-	if response.status_code == 200:
-		await query.message.reply_text(
-			"*Файлы успешно отправлены!*\n"
-			"После рассмотрения Вы получите ответ.\n"
-		)
+		await query.message.reply_text(f'*{message}*\n{post_message}')
 
-		title = f'Файлы от пользователя {context.user_data["details"]["name"]} ID:{user.id}'
+		title = f'Файлы отправлены пользователем {context.user_data["details"]["name"]} ID:{user.id}'
 		if files['photo']:
 			media = [InputMediaPhoto(photo_id, caption=title) for photo_id in files['photo']]
 			await context.bot.send_media_group(chat_id=ADMIN_CHAT_ID, media=media)
+
 		if files['document']:
 			for document_id in files['document']:
 				await context.bot.send_document(chat_id=ADMIN_CHAT_ID, document=document_id, caption=title)
 
+		context.chat_data.pop("upload_files", None)
+
 	else:
-		log.info(f'Failed to upload files on server for user {user.full_name} (ID:{user.id}')
+		log.info(f'Failed to upload files on server for user {user.full_name} (ID:{user.id})')
 
 		button = generate_inline_keyboard(
 			["Написать администратору"],
 			callback_data="message_for_admin",
 		)
+
 		await query.message.reply_text(
 			"*Файлы отправлены с ошибкой!*\n"
 			"Повторите процесс или сообщите о проблеме администратору\n",
 			reply_markup=button
 		)
-
-	context.chat_data.pop("upload_files", None)
