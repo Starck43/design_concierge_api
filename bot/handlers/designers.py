@@ -13,7 +13,7 @@ from bot.constants.menus import back_menu
 from bot.constants.messages import (
 	select_events_message, place_exchange_order_message, send_unknown_question_message, choose_sandbox_message,
 	show_after_set_segment_message, success_save_rating_message, offer_to_save_rating_message,
-	show_rating_title_message, yourself_rate_warning_message
+	show_rating_title_message, yourself_rate_warning_message, show_categories_message
 )
 from bot.handlers.common import (
 	go_back, get_state_menu, delete_messages_by_key, update_ratings, check_required_user_group_rating, load_cat_users,
@@ -37,6 +37,7 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 	message_text = update.message.text.lower()
 	state, message, inline_message, menu_markup, _ = get_state_menu(context)
 
+	# Раздел - РЕЕСТР ПОСТАВЩИКОВ
 	if group in [Group.DESIGNER, Group.SUPPLIER] and re.search(str(MenuState.SUPPLIERS_REGISTER), message_text, re.I):
 		state = MenuState.SUPPLIERS_REGISTER
 		if group == Group.DESIGNER:
@@ -46,32 +47,21 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 		if "categories" not in chat_data or not chat_data["categories"]:
 			# Получим список поставщиков для добавления в реестр
-			chat_data["categories"] = await load_categories(update.message, context, group=[2])
+			chat_data["categories"] = await load_categories(update.message, context, group=2)
 			if not chat_data["categories"]:
 				return await go_back(update, context, -1)
 
 		title = str(state).upper()
-		subtitle = "Выберите раздел:"
 
 		message = await update.message.reply_text(
 			text=f'*{title}*',
 			reply_markup=menu_markup,
 		)
+		# выведем список категорий поставщиков
+		inline_message = await show_categories_message(update.message, chat_data["categories"])
+		chat_data["last_message_id"] = inline_message.message_id
 
-		# формируем инлайн кнопки категорий
-		categories_inline_buttons = generate_inline_keyboard(
-			chat_data["categories"],
-			callback_data="id",
-			item_key="name",
-			prefix_callback_name="category_",
-			vertical=True
-		)
-
-		inline_message = await update.message.reply_text(
-			text=f'__{subtitle}__',
-			reply_markup=categories_inline_buttons,
-		)
-
+	# Раздел - БИРЖА УСЛУГ
 	elif group in [Group.DESIGNER, Group.OUTSOURCER] and re.search(str(MenuState.DESIGNER_EXCHANGE), message_text, re.I):
 		state = MenuState.DESIGNER_EXCHANGE
 		title = str(state).upper()
@@ -81,6 +71,18 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 			reply_markup=menu_markup,
 		)
 
+		if group == Group.DESIGNER:
+			if "outsourcer_categories" not in chat_data or not chat_data["outsourcer_categories"]:
+				# Получим список аутсорсеров для добавления в реестр
+				chat_data["outsourcer_categories"] = await load_categories(update.message, context, group=1)
+				if not chat_data["outsourcer_categories"]:
+					return await go_back(update, context, -1)
+
+			# выведем список категорий поставщиков
+			inline_message = await show_categories_message(update.message, chat_data["outsourcer_categories"])
+			chat_data["last_message_id"] = inline_message.message_id
+
+		# выведем кнопку для создания заявки
 		inline_message = await place_exchange_order_message(update.message)
 		chat_data["last_message_id"] = inline_message.message_id
 
