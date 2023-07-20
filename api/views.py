@@ -1,15 +1,17 @@
+import requests
 from django.core import exceptions
+from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ForeignKey, ManyToOneRel, ManyToManyRel, OneToOneRel
+from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel
 from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rate, Region
+from api.models import Category, User, Rate, Region, File
 from .serializers import (
-	CategorySerializer, UserListSerializer, RateSerializer, RegionSerializer, UserDetailSerializer
+	CategorySerializer, UserListSerializer, RateSerializer, RegionSerializer, UserDetailSerializer, FileUploadSerializer
 )
 
 
@@ -249,6 +251,7 @@ class RateQuestionView(APIView):
 
 class UserFieldNamesView(APIView):
 	""" Чтение названий полей модели User"""
+
 	def get(self, request, *args, **kwargs):
 		excludes = ["id", "user_id", "total_rate", "created_date", "token"]
 		field_names = {
@@ -256,3 +259,35 @@ class UserFieldNamesView(APIView):
 			if f.name not in excludes and not isinstance(f, (ManyToOneRel, ManyToManyRel, OneToOneRel))
 		}
 		return Response(field_names)
+
+
+class FileUploadView(APIView):
+	lookup_field = 'user_id'
+
+	def post(self, request, user_id):
+		user = get_object_or_404(User, user_id=user_id)
+		serializer = FileUploadSerializer(data=request.data)
+		if serializer.is_valid():
+			files = serializer.validated_data['files']
+			successfully_saved_files = []
+
+			for url in files:
+				response = requests.get(url)
+				if response.status_code == 200:
+					url = url.split('/')[-1]
+					file_obj = File(user=user)
+					file_obj.file.save(url, ContentFile(response.content))
+					file_obj.save()
+					successfully_saved_files.append(url)
+
+			if len(successfully_saved_files) == len(files):
+				message = 'Все файлы были получены успешно!'
+			elif len(successfully_saved_files) > 0:
+				message = 'Только часть файлов была получена!'
+			else:
+				message = 'Файлы не были получены!'
+
+			return Response({'message': message, 'saved_files': successfully_saved_files}, status=201)
+
+		else:
+			return Response(serializer.errors, status=400)

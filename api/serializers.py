@@ -1,3 +1,5 @@
+from abc import ABC
+
 from rest_framework import serializers
 
 from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rate, Feedback
@@ -153,3 +155,14 @@ class FeedbackSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = Feedback
 		fields = '__all__'
+
+
+class FileUploadSerializer(serializers.Serializer):
+	files = serializers.ListField(child=serializers.URLField())
+
+	def validate_files(self, value):
+		for url in value:
+			# Add any additional validation logic for each URL if needed
+			if not url.startswith('https://api.telegram.org'):
+				raise serializers.ValidationError('URL must start with https://api.telegram.org')
+		return value

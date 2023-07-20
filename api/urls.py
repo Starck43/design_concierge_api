@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
 	RateQuestionView, CategoryList, CategoryDetail, UserList, UserDetail, UpdateRates, RegionList, RegionDetail,
-	UserFieldNamesView
+	UserFieldNamesView, FileUploadView
 )
 
 # app_name = 'api'
@@ -15,6 +15,7 @@ urlpatterns = [
 	path('users/<int:pk>/', UserDetail.as_view(), name='user-detail'),
 	path('users/create/', UserDetail.as_view(), name='user-create'),
 	path('users/<str:user_id>/update_ratings/', UpdateRates.as_view(), name='update-user-ratings'),
+	path('users/<str:user_id>/upload/', FileUploadView.as_view(), name='file-upload'),
 
 	# path('regions/', RegionList.as_view(), name='region-list'),
 	path('user_field_names/', UserFieldNamesView.as_view(), name='user_field_names'),
@@ -42,6 +43,7 @@ urlpatterns = [
 # users/<user_id>/update_ratings/ (POST, PATCH) - обновление или частичное обновление рейтинга от пользователя с user_id
 # users/<id>/ (GET, PUT, PATCH) - получение, обновление или частичное обновление данных пользователя с id
 # users/<id>/?related_user={author_id}/ (GET) - получение пользователя с добавлением данных рейтинга от author_id
+# users/<user_id>/upload/ (POST) - отправка url файлов на сервер для пользователя с user_id
 
 # user_field_names/ (GET) - получение имен полей данных пользователя
 # rating_questions/ (GET) - получение списка вопросов для рейтинга
