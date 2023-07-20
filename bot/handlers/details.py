@@ -30,12 +30,13 @@ async def user_details(
 	_, _, _, markup_menu, inline_markup = get_state_menu(context)
 
 	total_rate = f'⭐ {selected_user["total_rate"]}' if selected_user["total_rate"] else ""
-	full_name = selected_user["name"] if selected_user["name"] != selected_user["username"] else ""
+	full_name = selected_user.get("name", "")
 	categories = extract_fields(selected_user["categories"], field_names="name")
 	regions = extract_fields(selected_user["regions"], field_names="name")
+	main_region = selected_user["main_region"]["name"] if selected_user.get("main_region") else None
 	work_experience = calculate_years_of_work(selected_user["business_start_year"])
 	address_caption = selected_user["address"] + " (на карте)" if selected_user["address"] else ""
-	geo_link = generate_map_url(selected_user["address"], selected_user["name"])
+	geo_link = generate_map_url(selected_user["address"], full_name)
 	phone_caption = "Позвонить" if selected_user["phone"] else ""
 
 	if max(selected_user["groups"]) == 2:
@@ -61,7 +62,7 @@ async def user_details(
 		f'{format_output_link("🌐", selected_user["site_url"], selected_user["site_url"])}'
 		f'{format_output_link(*detect_social(selected_user["socials_url"]))}'
 		f'{format_output_text("`Сфера деятельности`", categories, default_value="не выбрана", value_tag="_")}'
-		f'{format_output_text("`Основной регион`", selected_user["main_region"]["name"], value_tag="_")}'
+		f'{format_output_text("`Основной регион`", main_region, default_value="не установлен", value_tag="_")}'
 		f'{format_output_text("`Другие регионы`", regions, value_tag="_")}'
 		f'{format_output_text("`Опыт работы`", work_experience, value_tag="_")}'
 		f'{format_output_text("`Сегмент`", segment, value_tag="_")}',
