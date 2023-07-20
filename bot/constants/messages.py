@@ -127,6 +127,7 @@ async def show_categories_message(
 		text: str = None,
 		message_id: Optional[int] = None
 ) -> Optional[Message]:
+
 	if message_id is None:
 		reply_markup = generate_inline_keyboard(
 			category_list,
@@ -143,12 +144,11 @@ async def show_categories_message(
 		categories = data_list_to_string(category_list, field_names="name", separator="\n☑️ ")
 
 		await message.get_bot().edit_message_text(
-			text or f'*Вы выбрали категории:*'
+			text or f'*Выбранные категории:*'
 			        f'\n☑️ {categories}',
 			chat_id=message.chat_id,
 			message_id=message_id,
 		)
-		del message_id  # Удалим сразу переменную message_id из chat_data
 
 
 async def required_category_warn_message(message: Message, text: str = None) -> Message:

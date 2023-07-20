@@ -326,7 +326,7 @@ async def load_cat_users(
 async def load_categories(
 		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
-		group: list = None,
+		group: Union[int, list] = None,
 		related_users: Union[None, str, int] = "all",
 ):
 	params = {"group": group}

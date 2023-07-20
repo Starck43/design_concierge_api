@@ -27,7 +27,7 @@ DESIGNER_KEYBOARD = [
 ]
 
 DESIGNER_EXCHANGE_KEYBOARD = [
-	["Посмотреть", "Разместить"],
+	["Мои заявки"],
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
 
