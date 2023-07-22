@@ -15,7 +15,9 @@ from .models import (
 	Supplier,
 	Favourite,
 	Rate,
-	Feedback, File,
+	Feedback,
+	Order,
+	File,
 )
 
 
@@ -112,17 +114,19 @@ class UserAdmin(admin.ModelAdmin):
 	search_fields = ['name', 'username']
 	actions = ['import_users']
 	readonly_fields = ['total_rate']
-	list_display = ['id', 'user_id', 'username', 'access', 'symbol_rate']
-	list_display_links = ['username']
+	list_display = ['id', 'user_id', 'user_name', 'access', 'symbol_rate']
+	list_display_links = ['user_name']
 
+	@admin.display(description='Имя пользователя')
+	def user_name(self, obj):
+		return obj.name or obj.username
+
+	@admin.display(description='Рейтинг')
 	def symbol_rate(self, obj):
 		return f'{obj.total_rate} ⭐' if obj.total_rate else None
 
-	symbol_rate.short_description = '️ Рейтинг'
-
 	def get_object(self, request, object_id, from_field=None):
 		obj = super().get_object(request, object_id, from_field)
-		# здесь вы можете выполнить любую логику, связанную с объектом
 		return obj
 
 	def import_users(self, request, queryset):
@@ -149,8 +153,19 @@ class RateAdmin(admin.ModelAdmin):
 	list_display_links = ['receiver']
 
 
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+	list_display = ['title', 'owner', 'date', 'status']
+	list_display_links = ['title']
+
+	@admin.display(description='Дата завершения', empty_value='не указана')
+	def date(self, obj):
+		return obj.expire_date
+
+
 admin.site.register(Category, CategoryAdmin)
 # admin.site.register(Outsourcer)
 # admin.site.register(Supplier)
 admin.site.register(Favourite)
 admin.site.register(Feedback)
+admin.site.register(File)

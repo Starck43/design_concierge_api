@@ -9,9 +9,10 @@ from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rate, Region, File
+from api.models import Category, User, Rate, Region, File, Order
 from .serializers import (
-	CategorySerializer, UserListSerializer, RateSerializer, RegionSerializer, UserDetailSerializer, FileUploadSerializer
+	CategorySerializer, UserListSerializer, RateSerializer, RegionSerializer, UserDetailSerializer,
+	FileUploadSerializer, OrderSerializer
 )
 
 
@@ -219,6 +220,18 @@ class UpdateRates(APIView):
 				"total_rate": rating.receiver.total_rate
 			})
 		return Response(data=user_ratings, status=status.HTTP_201_CREATED)
+
+
+# Получение списка заказов и создание заказа
+class OrderListCreateView(generics.ListCreateAPIView):
+	queryset = Order.objects.all()
+	serializer_class = OrderSerializer
+
+
+# Обновление и удаление заказа
+class OrderRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+	queryset = Order.objects.all()
+	serializer_class = OrderSerializer
 
 
 # Получение списка вопросов для выставления рейтинга

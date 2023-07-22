@@ -1,3 +1,4 @@
+import os
 import re
 from enum import Enum
 
@@ -149,7 +150,7 @@ class User(models.Model):
 		ordering = ('-created_date',)
 
 	def __str__(self):
-		return f'{self.username} ({self.address or self.user_id})'
+		return f'{self.name or self.username}'
 
 	def save(self, *args, **kwargs):
 		is_new = self.pk is None # Check if the model is being saved for the first time
@@ -157,6 +158,12 @@ class User(models.Model):
 
 		if is_new:
 			self.update_total_rate()
+
+	def delete(self, *args, **kwargs):
+		# Удаление файлов при удалении пользователя
+		for file in self.files.all():
+			file.delete()
+		super().delete(*args, **kwargs)
 
 	def update_total_rate(self):
 		self.total_rate = self.calculate_total_rate()
@@ -338,7 +345,63 @@ class Feedback(models.Model):
 		return f'Отзыв о поставщике {self.receiver}'
 
 
-# TODO: Реализовать удаление файлов с диска
+class Order(models.Model):
+	STATUS_CHOICES = ((0, 'снят с биржи'), (1, 'активный'), (2, 'завершен'),)
+	owner = models.ForeignKey(
+		User,
+		verbose_name='Владелец заказа',
+		on_delete=models.CASCADE,
+		related_name='order_owner',
+		limit_choices_to=Q(categories__group=Group.DESIGNER.value),
+	)
+	title = models.CharField('Название заказа', max_length=100)
+	description = models.TextField('Описание заказа')
+	categories = models.ManyToManyField(
+		Category,
+		verbose_name='Категории',
+		related_name='orders',
+		limit_choices_to=Q(group=Group.OUTSOURCER.value),
+		blank=True
+	)
+	responding_users = models.ManyToManyField(
+		User,
+		verbose_name='Претенденты на заказ',
+		related_name='orders',
+		limit_choices_to=Q(categories__group=Group.OUTSOURCER.value),
+		blank=True,
+	)
+	executor = models.ForeignKey(
+		User,
+		verbose_name='Исполнитель заказа',
+		on_delete=models.SET_NULL,
+		related_name='order_executor',
+		limit_choices_to=Q(categories__group=Group.OUTSOURCER.value),
+		null=True,
+		blank=True
+	)
+	expire_date = models.DateField('Дата завершения', null=True, blank=True)
+	status = models.PositiveSmallIntegerField('Статус заказа', choices=STATUS_CHOICES, default=1)
+
+	class Meta:
+		verbose_name = 'Заказ на бирже'
+		verbose_name_plural = 'Заказы'
+
+	def __str__(self):
+		return self.title
+
+
 class File(models.Model):
 	user = models.ForeignKey(User, verbose_name='Автор', on_delete=models.CASCADE, related_name='files')
 	file = models.FileField(upload_to=user_directory_path, storage=MediaFileStorage(), blank=True)
+
+	class Meta:
+		verbose_name = 'Файл'
+		verbose_name_plural = 'Файлы пользователей'
+
+	def delete(self, *args, **kwargs):
+		# Удаление файла с диска
+		if self.file:
+			file_path = self.file.path
+			if os.path.exists(file_path):
+				os.remove(file_path)
+		super().delete(*args, **kwargs)

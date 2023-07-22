@@ -2,7 +2,7 @@ from abc import ABC
 
 from rest_framework import serializers
 
-from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rate, Feedback
+from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rate, Feedback, Order
 from .models import Region, Country
 
 
@@ -154,6 +154,14 @@ class RateSerializer(serializers.ModelSerializer):
 class FeedbackSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = Feedback
+		fields = '__all__'
+
+
+class OrderSerializer(serializers.ModelSerializer):
+	categories = CategorySerializer(many=True, read_only=True, partial=True)
+
+	class Meta:
+		model = Order
 		fields = '__all__'
 
 
