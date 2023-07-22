@@ -12,4 +12,4 @@ PROFILE_FIELD_SET = [
 	["username", "name", "segment", "categories", "main_region", "regions", "description", "address", "socials_url", "site_url"],
 ]
 
-JOB_STATUS = ["услуга приостановлена", "в поиске", "в работе", "услуга выполнена", "истек срок ожидания"]
+ORDER_STATUS = ["заказ приостановлен", "активен", "заказ в работе", "заказ выполнен", "истек срок выполнения"]
