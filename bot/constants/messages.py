@@ -427,18 +427,18 @@ async def check_file_size_message(message: Message, file: Union[Document, PhotoS
 async def send_unknown_question_message(message: Message, text: str = None) -> Message:
 	return await message.reply_text(
 		text or f'Не вполне понял Вас.\n'
-		        f'Выберите нужный вариант или уточните свой вопрос.',
+		        f'Выберите нужный раздел или уточните свой вопрос.',
 		reply_markup=message.reply_markup or back_menu,
 	)
 
 
-async def place_exchange_order_message(message: Message, text: str = None) -> Message:
+async def show_designer_order_message(message: Message, category: str = None) -> Message:
 	button = generate_inline_keyboard(
-		["Разместить заявку"],
-		callback_data="place_exchange_order"
+		["Разместить заказ"],
+		callback_data="place_order"
 	)
 	return await message.reply_text(
-		text or f'Разместите заявку на бирже',
+		f'Разместите новый заказ на бирже из категории {category.upper()}',
 		reply_markup=button,
 	)
 

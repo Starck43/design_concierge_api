@@ -17,8 +17,10 @@ async def user_details(
 		query: Union[CallbackQuery, Update],
 		context: ContextTypes.DEFAULT_TYPE,
 		title: str = None,
-		full_data: bool = False
+		show_all: bool = True
 ) -> Optional[Message]:
+
+	# TODO: Решить какие поля скрывать для базового тарифа (show_all)
 	chat_data = context.chat_data
 	chat_data.pop("saved_details_message", None)  # почистим сохраненное сообщение с карточкой пользователя
 
@@ -35,7 +37,7 @@ async def user_details(
 	regions = extract_fields(selected_user["regions"], field_names="name")
 	main_region = selected_user["main_region"]["name"] if selected_user.get("main_region") else None
 	work_experience = calculate_years_of_work(selected_user["business_start_year"])
-	address_caption = selected_user["address"] + " (на карте)" if selected_user["address"] else ""
+	address_caption = f'{selected_user["address"]}{" (на карте)" if selected_user["address"] else ""}'
 	geo_link = generate_map_url(selected_user["address"], full_name)
 	phone_caption = "Позвонить" if selected_user["phone"] else ""
 
@@ -69,7 +71,7 @@ async def user_details(
 		reply_markup=inline_markup
 	)
 
-	if not selected_user["user_id"] and not selected_user["segment"]:
+	if max(selected_user["groups"]) == 2 and not selected_user["user_id"] and not selected_user["segment"]:
 		await offer_to_set_segment_message(query.message)
 
 	_, _, avg_rating_text = get_user_rating_data(context, selected_user)

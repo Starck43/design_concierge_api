@@ -1,12 +1,12 @@
-import requests
+from telegram import Update, InputMediaPhoto
 from telegram import Update, InputMediaPhoto
 from telegram.ext import ContextTypes
 
-from bot.bot_settings import SERVER_URL, ADMIN_CHAT_ID
+from bot.bot_settings import ADMIN_CHAT_ID
 from bot.constants.messages import check_file_size_message
 from bot.handlers.common import delete_messages_by_key
 from bot.logger import log
-from bot.utils import generate_inline_keyboard, replace_double_slashes, fetch, fetch_user_data
+from bot.utils import generate_inline_keyboard, fetch_user_data
 
 
 async def share_files(update: Update, context: ContextTypes.DEFAULT_TYPE):

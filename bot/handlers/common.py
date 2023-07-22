@@ -1,4 +1,4 @@
-from typing import Union, List, Dict, Optional, ValuesView, Tuple
+from typing import Union, List, Dict, Optional, ValuesView, Tuple, Any
 
 from telegram import Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery
 from telegram.constants import ParseMode
@@ -15,7 +15,7 @@ from bot.logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (fetch_data, filter_list, generate_inline_keyboard, fetch_user_data, find_obj_in_list,
-                       rating_to_string, extract_fields)
+                       rating_to_string, extract_fields, match_message_text)
 
 
 async def user_authorization(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[bool]:
@@ -57,45 +57,55 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 	else:
 		query = update
 
-	chat_data = context.chat_data
-	button_text = query.message.text.lower()
-	up_level = level if button_text in BACK_KEYBOARD[0].lower() else 0
+	await query.message.delete()
+	index = level if match_message_text(BACK_KEYBOARD[0], query.message.text) else 0
 
-	menu = extract_state_menu(context, up_level)
-	if not menu:
-		start_menu = await init_start_menu(context)
-		return start_menu["state"]
+	current_menu = get_state_menu(context)
+	current_inline_message = current_menu[2]
+	if current_menu[1]:
+		await delete_messages_by_key(context, current_menu[1])
 
-	state, reply_message, inline_message, markup, inline_markup = menu
-	last_message_id = chat_data.get("last_message_id")
-	once_message_ids = chat_data.get("once_message_ids")
+	if current_inline_message:
+		await delete_messages_by_key(context, current_inline_message)
 
-	if reply_message and not inline_message:
-		await delete_messages_by_key(context, "last_message_id")
+	prev_menu = extract_state_menu(context, index)
+	if not prev_menu:
+		init_menu = await init_start_menu(context)
+		return init_menu["state"]
 
-	if once_message_ids:
-		await delete_messages_by_key(context, "once_message_ids")
+	state, reply_message, inline_message, markup, inline_markup = prev_menu
 
 	if reply_message:
-		await query.message.reply_text(
+		message = await query.message.reply_text(
 			text=reply_message.text_markdown,
 			reply_markup=markup
 		)
+		context.chat_data["menu"][-1]["message"] = message
 
 	if inline_message:
-		if last_message_id and not reply_message:
-			await context.bot.edit_message_text(
+		if current_inline_message and not reply_message:
+			message = await context.bot.edit_message_text(
 				text=inline_message.text_markdown,
-				chat_id=chat_data.get("chat_id"),
-				message_id=last_message_id,
+				chat_id=query.message.chat_id,
+				message_id=current_inline_message.message_id,
 				reply_markup=inline_markup or inline_message.reply_markup
 			)
+
 		else:
 			message = await query.message.reply_text(
 				text=inline_message.text_markdown,
 				reply_markup=inline_markup or inline_message.reply_markup
 			)
-			chat_data["last_message_id"] = message.message_id
+			context.chat_data["menu"][-1]["inline_message"] = message
+
+		last_message_id = context.chat_data.get("last_message_id")
+		# если последнее сохраненное сообщение было заменено на новое выше, то не удаляем его
+		if last_message_id and last_message_id != message.message_id:
+			await delete_messages_by_key(context, "last_message_id")
+	else:
+		await delete_messages_by_key(context, "last_message_id")
+
+	await delete_messages_by_key(context, "saved_message_ids")
 
 	return state
 
@@ -125,14 +135,14 @@ async def init_start_menu(
 	return chat_data["menu"][0]
 
 
-# TODO: Добавить проверку на out of range
-def get_state_menu(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Tuple[any, any, any, any, any]:
-	chat_data = context.chat_data
-	menu = chat_data.get("menu", [])
-	if not menu:
-		return None, None, None, None, None
+def get_state_menu(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Tuple[Any, ...]:
+	try:
+		chat_data = context.chat_data
+		menu = chat_data.get("menu", [])
+		return tuple(menu[index].values())
 
-	return menu[index].values()
+	except IndexError:
+		return None, None, None, None, None
 
 
 def extract_state_menu(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Optional[ValuesView]:
@@ -181,16 +191,24 @@ async def edit_last_message(
 	return message
 
 
-async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, key_name: str):
+async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, message: Union[Message, str, None]):
 	"""
 	Deletes messages based on a given key name from the chat data.
 	:param context: The context object containing chat data.
-	:param key_name: The field name of the message or message ID.
+	:param message: The Message or field name of the message or message ID.
 	"""
-	message_id = context.chat_data.get(key_name)
 	chat_id = context.chat_data.get("chat_id")
-	if not message_id or not chat_id:
-		context.chat_data.pop(key_name, None)
+	if not message or not chat_id:
+		return
+
+	if isinstance(message, Message):
+		message_id = message.message_id
+		await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+		return
+
+	message_id = context.chat_data.get(message)
+	if not message_id:
+		context.chat_data.pop(message, None)
 		return
 
 	if isinstance(message_id, int):
@@ -204,12 +222,7 @@ async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, key_name: s
 		for value in message_id:
 			await context.bot.delete_message(chat_id=chat_id, message_id=value)
 
-	if isinstance(message_id, Message):
-		if message_id:
-			message_id = message_id.message_id
-			await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-
-	del context.chat_data[key_name]
+	del context.chat_data[message]
 
 
 def set_priority_group(context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -225,7 +238,6 @@ def set_priority_group(context: ContextTypes.DEFAULT_TYPE) -> int:
 			category_list = user_details["categories"]
 
 		user_groups = extract_fields(category_list, field_names="group")
-		print(user_groups, category_list)
 
 	group = min(user_groups, default=3)
 	context.user_data["group"] = Group.get_enum(group)
@@ -249,7 +261,7 @@ async def update_ratings(
 		user_id: str,
 		data: any
 ) -> Optional[List[dict]]:
-	await delete_messages_by_key(context, "once_message_ids")
+	await delete_messages_by_key(context, "saved_message_ids")
 
 	res = await fetch_user_data(user_id, "/update_ratings", data=data, method="POST")
 	if res["status_code"] == 304:
@@ -302,12 +314,11 @@ async def load_cat_users(
 	if cat_id not in cat_users or not cat_users[cat_id]:
 		res = await fetch_user_data(params={"category": cat_id})
 		if not res["data"]:
-			cat_name = chat_data.get("selected_cat", "")
 			await catch_server_error(
 				message,
 				context,
 				error_data=res,
-				text=f'Ошибка получения списка поставщиков для категории "{cat_name.upper()}".',
+				text=f'Ошибка получения списка поставщиков!',
 				reply_markup=back_menu
 			)
 			return None
@@ -319,7 +330,7 @@ async def load_cat_users(
 		callback_data="id",
 		item_key="username",
 		item_prefix=["⭐️", "total_rate"],
-		prefix_callback_name="supplier_",
+		prefix_callback_name="user_",
 	)
 
 
@@ -359,17 +370,22 @@ async def load_user(
 		context: ContextTypes.DEFAULT_TYPE,
 		user_id: int,
 		designer_id: Optional[int] = None,
-):
+) -> Optional[dict]:
+
 	if not user_id:
 		return None
 
 	params = {"related_user": designer_id} if designer_id is not None else {}
 	res = await fetch_user_data(user_id, params=params)
-	if res["data"] is None:
+	data: dict = res["data"]
+	if data is None:
 		text = "Ошибка чтения данных пользователя."
 		await catch_server_error(message, context, error_data=res, text=text, reply_markup=None)
 
-	return res["data"]
+	if data:
+		data.setdefault("name", data["username"])
+
+	return data
 
 
 async def load_regions(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[list], Optional[list]]:

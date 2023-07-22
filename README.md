@@ -20,7 +20,7 @@
 словарь, хранящий запрошенные данные о поставщиках. Ключ объекта - это id пользователя
 
 - `selected_cat`
-объект с данными о текущей категории {id, name, group}
+объект с данными для текущей категории {id, name, group}
 
 - `selected_user`
 объект с данными о текущем пользователе {id, username, groups, total_rate и др}
@@ -71,7 +71,7 @@
 - `last_message_id`
     ID последнего сохраненного сообщения с инлайн клавиатурой для возможности замены сообщения на новое
 
-- `once_message_ids`
+- `saved_message_ids`
     Список ID сохраненных сообщений, которые требуется удалить при возврате на верхний уровень меню
 
 ### bot_data:
@@ -92,6 +92,15 @@
         "designer_program_quality": "Работа с дизайнерами",
         "location": "Удобство расположения"
     }
+]
+```
+- `user_field_names`
+список полей данных пользователя для трех групп: _дизайнеры, аутсорсеры, поставщики_
+```json5
+[
+	["username", "categories", "main_region", "socials_url", "regions", ],
+	["username", "categories", "main_region", "regions", "description", "address", "socials_url", "site_url"],
+	["username", "name", "segment", "categories", "main_region", "regions", "description", "address", "socials_url", "site_url"],
 ]
 ```
 

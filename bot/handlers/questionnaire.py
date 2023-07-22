@@ -162,7 +162,7 @@ async def show_rating_questions(
 		if res:
 			await success_questionnaire_message(update.message)
 
-		await delete_messages_by_key(context, "once_message_ids")
+		await delete_messages_by_key(context, "saved_message_ids")
 
 		return await end_questionnaire(update, context)
 
@@ -189,10 +189,10 @@ async def show_user_rating_messages(
 	rating_questions, avg_rating, _ = get_user_rating_data(context, selected_user)
 	symbols = ['⬜️' for _ in range(rate_value)]
 
-	await delete_messages_by_key(context, "once_message_ids")
-	chat_data["once_message_ids"] = {}
+	await delete_messages_by_key(context, "saved_message_ids")
+	chat_data["saved_message_ids"] = {}
 	saved_message = await message.reply_text(text=title or selected_user["username"], reply_markup=reply_markup)
-	chat_data["once_message_ids"].update({"title_id": saved_message.message_id})
+	chat_data["saved_message_ids"].update({"title_id": saved_message.message_id})
 
 	for i, question in enumerate(rating_questions.keys()):
 		subtitle = f'{i+1}. *{rating_questions[question]}*'
@@ -211,7 +211,7 @@ async def show_user_rating_messages(
 			)
 
 		saved_message = await message.reply_text(text=subtitle, reply_markup=rate_markup)
-		chat_data["once_message_ids"].update({i: saved_message.message_id})
+		chat_data["saved_message_ids"].update({i: saved_message.message_id})
 
 	return saved_message
 

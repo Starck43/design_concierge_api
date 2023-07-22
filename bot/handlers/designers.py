@@ -6,15 +6,16 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import (
-	SUPPLIERS_REGISTER_KEYBOARD, SUPPLIER_DETAILS_KEYBOARD, BACK_KEYBOARD, TO_TOP_KEYBOARD,
-	DESIGNER_EXCHANGE_KEYBOARD, DESIGNER_EVENTS_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SEGMENT_KEYBOARD
+	SUPPLIERS_REGISTER_KEYBOARD, USER_DETAILS_KEYBOARD, BACK_KEYBOARD, TO_TOP_KEYBOARD,
+	DESIGNER_SERVICES_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SEGMENT_KEYBOARD
 )
 from bot.constants.menus import back_menu
 from bot.constants.messages import (
-	select_events_message, place_exchange_order_message, send_unknown_question_message, choose_sandbox_message,
+	select_events_message, show_designer_order_message, send_unknown_question_message, choose_sandbox_message,
 	show_after_set_segment_message, success_save_rating_message, offer_to_save_rating_message,
 	show_rating_title_message, yourself_rate_warning_message, show_categories_message
 )
+from bot.constants.patterns import USER_RATE_PATTERN, USER_FEEDBACK_PATTERN
 from bot.handlers.common import (
 	go_back, get_state_menu, delete_messages_by_key, update_ratings, check_required_user_group_rating, load_cat_users,
 	load_categories, load_user, get_user_rating_data
@@ -24,8 +25,8 @@ from bot.handlers.questionnaire import show_user_rating_messages
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (
-	generate_reply_keyboard, generate_inline_keyboard, fetch_user_data, find_obj_in_list, send_action,
-	extract_fields, format_output_text, replace_or_add_string, rating_to_string
+	generate_reply_keyboard, fetch_user_data, send_action, find_obj_in_list, extract_fields, format_output_text,
+	replace_or_add_string, match_message_text
 )
 
 
@@ -45,10 +46,10 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 		else:
 			menu_markup = back_menu
 
-		if "categories" not in chat_data or not chat_data["categories"]:
+		if "supplier_categories" not in chat_data or not chat_data["supplier_categories"]:
 			# Получим список поставщиков для добавления в реестр
-			chat_data["categories"] = await load_categories(update.message, context, group=2)
-			if not chat_data["categories"]:
+			chat_data["supplier_categories"] = await load_categories(update.message, context, group=2)
+			if not chat_data["supplier_categories"]:
 				return await go_back(update, context, -1)
 
 		title = str(state).upper()
@@ -58,34 +59,41 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 			reply_markup=menu_markup,
 		)
 		# выведем список категорий поставщиков
-		inline_message = await show_categories_message(update.message, chat_data["categories"])
-		chat_data["last_message_id"] = inline_message.message_id
+		inline_message = await show_categories_message(update.message, chat_data["supplier_categories"])
 
 	# Раздел - БИРЖА УСЛУГ
-	elif group in [Group.DESIGNER, Group.OUTSOURCER] and re.search(str(MenuState.DESIGNER_EXCHANGE), message_text, re.I):
-		state = MenuState.DESIGNER_EXCHANGE
+	elif group in [Group.DESIGNER, Group.OUTSOURCER] and re.search(str(MenuState.OUTSOURCER_SERVICES), message_text,
+	                                                               re.I):
+		state = MenuState.OUTSOURCER_SERVICES
 		title = str(state).upper()
-		menu_markup = generate_reply_keyboard(DESIGNER_EXCHANGE_KEYBOARD, is_persistent=True)
 		message = await update.message.reply_text(
 			f'__{title}__',
 			reply_markup=menu_markup,
 		)
 
 		if group == Group.DESIGNER:
+			keyboard = DESIGNER_SERVICES_KEYBOARD
+
 			if "outsourcer_categories" not in chat_data or not chat_data["outsourcer_categories"]:
-				# Получим список аутсорсеров для добавления в реестр
+				# Получим список аутсорсеров
 				chat_data["outsourcer_categories"] = await load_categories(update.message, context, group=1)
 				if not chat_data["outsourcer_categories"]:
 					return await go_back(update, context, -1)
 
-			# выведем список категорий поставщиков
+			# выведем список категорий аутсорсеров
 			inline_message = await show_categories_message(update.message, chat_data["outsourcer_categories"])
-			chat_data["last_message_id"] = inline_message.message_id
 
-		# выведем кнопку для создания заявки
-		inline_message = await place_exchange_order_message(update.message)
-		chat_data["last_message_id"] = inline_message.message_id
+		else:
+			# [task 1]: вывести inline список активных заказов дизайнеров
+			keyboard = DESIGNER_SERVICES_KEYBOARD
+			del keyboard[0][2]
+			inline_message = await update.message.reply_text(
+				f'Текущие заказы:'
+			)
 
+		menu_markup = generate_reply_keyboard(keyboard, is_persistent=True)
+
+	# Раздел - СОБЫТИЯ
 	elif group in [Group.DESIGNER, Group.OUTSOURCER] and re.search(str(MenuState.DESIGNER_EVENTS), message_text, re.I):
 		state = MenuState.DESIGNER_EVENTS
 		title = str(state).upper()
@@ -94,9 +102,9 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 			f'__{title}__',
 			reply_markup=menu_markup
 		)
-
 		inline_message = await select_events_message(update.message)
 
+	# Раздел - БАРАХОЛКА
 	elif group in [Group.DESIGNER, Group.OUTSOURCER] and re.search(str(MenuState.DESIGNER_SANDBOX), message_text, re.I):
 		state = MenuState.DESIGNER_SANDBOX
 		title = str(state).upper()
@@ -104,11 +112,9 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 			f'__{title}__\n',
 			reply_markup=menu_markup
 		)
-
 		inline_message = await choose_sandbox_message(update.message)
 
 	else:
-		message = None
 		await send_unknown_question_message(update.message)
 
 	chat_data["menu"].append({
@@ -122,37 +128,61 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 	return state or MenuState.START
 
 
-async def supplier_details_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+async def suppliers_search_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+	# Функция поиска поставщиков
+	chat_data = context.chat_data
+	state = MenuState.SUPPLIERS_SEARCH
+	title = str(state).upper()
+	menu_markup = back_menu
+
+	# TODO: Разработать механизм поиска поставщика в таблице User по критериям
+	message = await update.message.reply_text(
+		f'__{title}__\n'
+		f'Выберите критерии поиска:\n'
+		f'[кнопки]',
+		reply_markup=menu_markup,
+	)
+
+	chat_data["menu"].append({
+		"state": state,
+		"message": message,
+		"inline_message": None,
+		"markup": menu_markup,
+		"inline_markup": None,
+	})
+
+	return state
+
+
+async def user_details_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	group = context.user_data["group"]
 	chat_data = context.chat_data
 	chat_data["sub_state"] = ""
-	message_text = update.message.text.lower()
-	state = MenuState.SUPPLIER_DETAILS
+	selected_user = chat_data["selected_user"]
+	# selected_user_group = Group.get_enum(max(selected_user["groups"]))
+
+	message_text = update.message.text
+	state = MenuState.USER_DETAILS
+
 	if group == Group.DESIGNER:
-		menu_markup = generate_reply_keyboard(SUPPLIER_DETAILS_KEYBOARD, is_persistent=True)
+		menu_markup = generate_reply_keyboard(USER_DETAILS_KEYBOARD, is_persistent=True)
 	else:
 		menu_markup = back_menu
 
-	if message_text == str(MenuState.SUPPLIER_SEARCH).lower() and message_text != chat_data["sub_state"]:
-		message = await update.message.reply_text(
-			f'__Подбор поставщика__\n'
-			f'Выбор условий поиска (в разработке)',
-			reply_markup=menu_markup,
-		)
+	# Подраздел - ОБНОВИТЬ РЕЙТИНГ
+	if match_message_text(USER_RATE_PATTERN, message_text):
+		if chat_data["sub_state"] == "feedback_state":
+			return
 
-	elif message_text == str(MenuState.SUPPLIER_RATE).lower() and message_text != chat_data["sub_state"]:
-		supplier = chat_data.get("selected_user", {})
-		if not supplier:
-			return state
-
+		chat_data["sub_state"] = "rating_state"
 		message = await update.message.reply_text(
-			f'*{supplier["username"]}*',
+			f'*{selected_user["name"]}*',
 			reply_markup=menu_markup
 		)
 
 		# вывод рейтинга
 		if context.bot_data.get("rating_questions"):
-			rates = supplier.get("designer_rating", {})
+			rates = selected_user.get("designer_rating", {})
 			chat_data["user_ratings"] = [{"receiver_id": rates["receiver_id"]}]
 			rates_list = []
 			for key, val in rates.items():
@@ -162,8 +192,12 @@ async def supplier_details_choice(update: Update, context: ContextTypes.DEFAULT_
 
 			designer_rating = f'⭐{round(sum(rates_list) / len(rates_list), 1)}' if rates_list else ""
 			if designer_rating:
-				rating_title = format_output_text("`Ваша текущая оценка`", designer_rating,
-				                                  default_value="Новый рейтинг", value_tag="_")
+				rating_title = format_output_text(
+					"`Ваша текущая оценка`",
+					designer_rating,
+					default_value="Новый рейтинг",
+					value_tag="_"
+				)
 			else:
 				rating_title = "Оцените все критерии поставщика:"
 
@@ -171,14 +205,29 @@ async def supplier_details_choice(update: Update, context: ContextTypes.DEFAULT_
 
 		chat_data["saved_submit_rating_message"] = await offer_to_save_rating_message(update.message)
 
-	elif message_text != chat_data["sub_state"]:
-		message = None
+	# Подраздел - ОТЗЫВ
+	elif match_message_text(USER_FEEDBACK_PATTERN, message_text):
+		if chat_data["sub_state"] == "feedback_state":
+			return
+
+		chat_data["sub_state"] = "feedback_state"
+		message = await update.message.reply_text(
+			f'*Напишите отзыв о поставщике:\n'
+			f'{selected_user["name"].upper()}*',
+		)
+
+	elif chat_data["sub_state"] == "feedback_state":
+		await update.message.delete()
+		message = await update.message.reply_text(
+			f'{selected_user["name"].upper()}\n'
+			f'Отзыв успешно отправлен!\n',
+			reply_markup=menu_markup
+		)
 
 	else:
 		message = None
 		await send_unknown_question_message(update.message)
 
-	chat_data["sub_state"] = message_text
 	last_state, _ = find_obj_in_list(chat_data["menu"], {"state": state})
 	# сохраним одно состояние для всех подсостояний sub_state
 	if not last_state:
@@ -194,6 +243,61 @@ async def supplier_details_choice(update: Update, context: ContextTypes.DEFAULT_
 
 
 @send_action(ChatAction.TYPING)
+async def select_outsourcers_in_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	# Выбор категории аутсорсеров
+	query = update.callback_query
+
+	await query.answer()
+	cat_id = query.data.lstrip("category_")
+	group = context.user_data["group"]
+	chat_data = context.chat_data
+	state, message, inline_message, menu_markup, _ = get_state_menu(context)
+
+	outsourcer_list_buttons = await load_cat_users(query.message, context, cat_id)
+	if outsourcer_list_buttons is None:
+		return await go_back(update, context, -1)
+
+	if group == Group.DESIGNER:
+		menu_markup = generate_reply_keyboard(DESIGNER_SERVICES_KEYBOARD, is_persistent=True)
+	else:
+		menu_markup = back_menu
+
+	selected_cat, _ = find_obj_in_list(chat_data["outsourcer_categories"], {"id": int(cat_id)})
+	chat_data["selected_cat"] = selected_cat
+
+	title = f'➡️ Категория *{selected_cat["name"].upper()}*'
+	subtitle = "Список аутсорсеров:"
+
+	await query.message.delete()
+	message = await query.message.reply_text(
+		text=title,
+		reply_markup=menu_markup,
+	)
+
+	# формируем инлайн кнопки аутсорсеров в текущей категории
+	inline_message = await query.message.reply_text(
+		text=subtitle,
+		reply_markup=outsourcer_list_buttons
+	)
+
+	if group == Group.DESIGNER:
+		# выведем кнопку для создания заказа в текущей категории
+		order_message = await show_designer_order_message(query.message, category=selected_cat["name"])
+		# сохраним id инлайн сообщения, чтобы при возврате в меню оно удалилось
+		chat_data["last_message_id"] = order_message.message_id
+
+	chat_data["menu"].append({
+		"state": state,
+		"message": message,
+		"inline_message": inline_message,
+		"markup": menu_markup,
+		"inline_markup": None,
+	})
+
+	return state
+
+
+@send_action(ChatAction.TYPING)
 async def select_suppliers_in_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	# Выбор категории поставщиков
 	query = update.callback_query
@@ -202,24 +306,24 @@ async def select_suppliers_in_cat_callback(update: Update, context: ContextTypes
 	cat_id = query.data.lstrip("category_")
 	group = context.user_data["group"]
 	chat_data = context.chat_data
+	state, message, inline_message, menu_markup, _ = get_state_menu(context)
 
-	suppliers_list_buttons = await load_cat_users(query.message, context, cat_id)
-	if suppliers_list_buttons is None:
+	supplier_list_buttons = await load_cat_users(query.message, context, cat_id)
+	if supplier_list_buttons is None:
 		return await go_back(update, context, -1)
 
-	state = MenuState.SUPPLIERS_REGISTER
 	if group == Group.DESIGNER:
 		menu_markup = generate_reply_keyboard(SUPPLIERS_REGISTER_KEYBOARD, is_persistent=True)
 	else:
 		menu_markup = back_menu
 
-	selected_cat, _ = find_obj_in_list(chat_data["categories"], {"id": int(cat_id)})
+	selected_cat, _ = find_obj_in_list(chat_data["supplier_categories"], {"id": int(cat_id)})
 	chat_data["selected_cat"] = selected_cat
 
-	title = f'➡️ Раздел *{selected_cat["name"].upper()}*'
+	title = f'➡️ Категория *{selected_cat["name"].upper()}*'
 	subtitle = "Список поставщиков:"
 
-	await query.message.delete()  # удалим кнопки выбора категорий
+	await query.message.delete()
 	message = await query.message.reply_text(
 		text=title,
 		reply_markup=menu_markup,
@@ -228,7 +332,7 @@ async def select_suppliers_in_cat_callback(update: Update, context: ContextTypes
 	# формируем инлайн кнопки поставщиков
 	inline_message = await query.message.reply_text(
 		text=subtitle,
-		reply_markup=suppliers_list_buttons
+		reply_markup=supplier_list_buttons
 	)
 
 	chat_data["menu"].append({
@@ -243,22 +347,21 @@ async def select_suppliers_in_cat_callback(update: Update, context: ContextTypes
 
 
 @send_action(ChatAction.TYPING)
-async def select_supplier_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	# Выбор поставщика через callback_data "supplier_{id}"
+async def select_user_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	# Выбор поставщика через callback_data "user_{id}"
 	query = update.callback_query
 
 	await query.answer()
-	supplier_id = int(query.data.lstrip("supplier_"))
+	supplier_id = int(query.data.lstrip("user_"))
 	chat_data = context.chat_data
 	chat_data.setdefault("suppliers", {})
 	supplier = context.chat_data.get("supplier", {}).get(supplier_id, None)
 	designer_id = context.user_data["details"]["id"]
 	group = context.user_data["group"]
 
-	state = MenuState.SUPPLIER_DETAILS
-	if group == Group.DESIGNER:
-		keyboard = SUPPLIERS_REGISTER_KEYBOARD if supplier_id == designer_id else SUPPLIER_DETAILS_KEYBOARD
-		menu_markup = generate_reply_keyboard(keyboard, is_persistent=True)
+	state = MenuState.USER_DETAILS
+	if group == Group.DESIGNER and supplier_id != designer_id:
+		menu_markup = generate_reply_keyboard(USER_DETAILS_KEYBOARD, is_persistent=True)
 	else:
 		menu_markup = back_menu
 
@@ -280,7 +383,8 @@ async def select_supplier_details_callback(update: Update, context: ContextTypes
 		"inline_markup": None,
 	})
 
-	await query.message.delete()  # удалим кнопки выбора поставщика
+	await query.message.delete()  # удалим список поставщиков
+	await delete_messages_by_key(context, "last_message_id")
 	await user_details(query, context)
 
 	return state
@@ -305,15 +409,15 @@ async def save_supplier_rating_callback(update: Update, context: ContextTypes.DE
 
 		data = await update_ratings(query.message, context, user_id=user_id, data=chat_data["user_ratings"])
 		if data:
-			user = data[0]
-			await success_save_rating_message(saved_submit_rating_message, user_data=user)
+			updated_user = data[0]
+			await success_save_rating_message(saved_submit_rating_message, user_data=updated_user)
 
 			# получаем и обновляем сохраненные данные поставщиков
-			res = await fetch_user_data(user["id"], params={"related_user": designer_id})
+			res = await fetch_user_data(updated_user["id"], params={"related_user": designer_id})
 			selected_user = res["data"]
 			if selected_user:
 				chat_data["selected_user"] = selected_user
-				chat_data["suppliers"].update({user["id"]: res["data"]})
+				chat_data["suppliers"].update({updated_user["id"]: res["data"]})
 
 				# удалим всех поставщиков из сохраненных в cat_users
 				cat_users = chat_data.get("cat_users", {})
@@ -334,7 +438,7 @@ async def save_supplier_rating_callback(update: Update, context: ContextTypes.DE
 				chat_data["last_message_id"] = message.message_id
 
 		chat_data.pop("user_ratings", None)
-		await delete_messages_by_key(context, "once_message_ids")
+		await delete_messages_by_key(context, "saved_message_ids")
 
 
 async def select_supplier_segment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -435,16 +539,16 @@ async def select_sandbox_callback(update: Update, context: ContextTypes.DEFAULT_
 	return state
 
 
-async def place_exchange_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	# Разместить заявку на бирже
+async def place_designer_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	# Разместить заказ на бирже
 	query = update.callback_query
 
 	await query.answer()
 	order_id = query.data
 	chat_data = context.chat_data
 
-	state = MenuState.DESIGNER_EXCHANGE
-	menu_markup = generate_reply_keyboard(DESIGNER_EXCHANGE_KEYBOARD, is_persistent=True)
+	state = MenuState.OUTSOURCER_SERVICES
+	menu_markup = generate_reply_keyboard(DESIGNER_SERVICES_KEYBOARD, is_persistent=True)
 
 	if order_id:
 		message = await query.message.reply_text(

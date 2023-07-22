@@ -1,5 +1,5 @@
 from bot.constants.keyboards import (
-	PROFILE_KEYBOARD, DESIGNER_KEYBOARD, SUPPLIER_DETAILS_KEYBOARD, )
+	PROFILE_KEYBOARD, DESIGNER_KEYBOARD, USER_DETAILS_KEYBOARD, )
 from bot.utils import flatten_list
 
 
@@ -17,6 +17,9 @@ REPEAT_QUESTIONNAIRE_PATTERN = r'повторить анкетирование|r
 REGISTRATION_PATTERN = r'(начать|повторить) регистрацию|регистрация|register$'
 PROFILE_PATTERN = r'профиль'
 TARIFF_PATTERN = r'тариф'
+USER_RATE_PATTERN = r'рейтинг|оценка|оценить(.*поставщика)'
+USER_FEEDBACK_PATTERN = r'отзыв'
+SUPPLIERS_SEARCH_PATTERN = r'поиск|отбор|подбор|найти|искать|подобрать|отобрать|отфильтровать'
 
 DESIGNER_PATTERN = r'' + flatten_list(DESIGNER_KEYBOARD[0:3], exclude=PROFILE_KEYBOARD, delimiter="|")
-SUPPLIER_DETAILS_PATTERN = r'' + flatten_list(SUPPLIER_DETAILS_KEYBOARD[0] + SUPPLIER_DETAILS_KEYBOARD[1], delimiter="|")
+USER_DETAILS_PATTERN = r'' + flatten_list(USER_DETAILS_KEYBOARD[0], delimiter="|")

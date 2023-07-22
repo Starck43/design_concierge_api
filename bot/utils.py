@@ -2,7 +2,7 @@ import difflib
 import re
 from datetime import datetime, timedelta
 from functools import wraps
-from typing import Optional, Dict, Union, List, Any, Tuple
+from typing import Optional, Dict, Union, List, Any, Tuple, Pattern
 from urllib.parse import urlencode
 
 import aiohttp
@@ -569,6 +569,10 @@ def remove_special_chars(s: str, code_alias: str = "866") -> str:
 	return s.encode(code_alias, 'ignore').decode(code_alias).strip()
 
 
+def match_message_text(pattern: Union[str, Pattern[str]], message_text: str) -> bool:
+	return bool(re.search(remove_special_chars(pattern), remove_special_chars(message_text), re.I))
+
+
 def flatten_list(
 		lst: List[Union[str, List[str]]],
 		exclude: Optional[Union[str, List[str]]] = None,
@@ -871,7 +875,7 @@ async def fetch_data(
 	}
 
 
-def generate_map_url(address: str, org_name: str = "") -> str:
+def generate_map_url(address: Optional[str], org_name: str = "") -> str:
 	if not address:
 		return ""
 

@@ -11,16 +11,17 @@ from bot.constants.menus import main_menu
 from bot.constants.messages import denied_access_message, share_files_message
 from bot.constants.patterns import (
 	DONE_PATTERN, PROFILE_PATTERN, BACK_PATTERN, SERVICES_PATTERN,
-	COOPERATION_REQUESTS_PATTERN, START_PATTERN, DESIGNER_PATTERN, SUPPLIER_DETAILS_PATTERN, TARIFF_PATTERN
+	COOPERATION_REQUESTS_PATTERN, START_PATTERN, DESIGNER_PATTERN, USER_DETAILS_PATTERN, TARIFF_PATTERN,
+	SUPPLIERS_SEARCH_PATTERN
 )
 from bot.handlers.common import (
 	go_back, init_start_menu, user_authorization, load_rating_questions, load_user_field_names, set_priority_group
 )
 from bot.handlers.cooperation import cooperation_requests, fetch_supplier_requests
 from bot.handlers.designers import (
-	main_menu_choice, select_suppliers_in_cat_callback, select_supplier_details_callback, supplier_details_choice,
-	select_events_callback, select_sandbox_callback, place_exchange_order_callback, select_supplier_segment_callback,
-	save_supplier_rating_callback
+	main_menu_choice, select_suppliers_in_cat_callback, select_user_details_callback, user_details_choice,
+	select_events_callback, select_sandbox_callback, place_designer_order_callback, select_supplier_segment_callback,
+	save_supplier_rating_callback, select_outsourcers_in_cat_callback, suppliers_search_choice
 )
 from bot.handlers.done import done
 from bot.handlers.profile import (
@@ -114,9 +115,14 @@ main_menu_handler = MessageHandler(
 	main_menu_choice
 )
 
-supplier_details_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(SUPPLIER_DETAILS_PATTERN, re.I)),
-	supplier_details_choice
+user_details_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(USER_DETAILS_PATTERN, re.I)),
+	user_details_choice
+)
+
+suppliers_search_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(SUPPLIERS_SEARCH_PATTERN, re.I)),
+	suppliers_search_choice
 )
 
 profile_handler = MessageHandler(
@@ -143,9 +149,10 @@ main_dialog = ConversationHandler(
 	allow_reentry=True,
 	entry_points=[
 		CommandHandler('start', start_conversation),
-		MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(
-			re.compile(START_PATTERN, re.I)
-		), start_conversation),
+		MessageHandler(
+			filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(START_PATTERN, re.I)),
+			start_conversation
+		),
 	],
 	states={
 		MenuState.START: [
@@ -156,19 +163,22 @@ main_dialog = ConversationHandler(
 			profile_handler,
 		],
 		MenuState.SUPPLIERS_REGISTER: [
+			suppliers_search_handler,
 			CallbackQueryHandler(select_suppliers_in_cat_callback, pattern=r"^category_\d+$"),
-			CallbackQueryHandler(select_supplier_details_callback, pattern=r"^supplier_\d+$"),
+			CallbackQueryHandler(select_user_details_callback, pattern=r"^user_\d+$"),
 		],
-		MenuState.SUPPLIER_DETAILS: [
-			supplier_details_handler,
+		MenuState.OUTSOURCER_SERVICES: [
+			CallbackQueryHandler(select_outsourcers_in_cat_callback, pattern=r"^category_\d+$"),
+			CallbackQueryHandler(select_user_details_callback, pattern=r"^user_\d+$"),
+			CallbackQueryHandler(place_designer_order_callback, pattern=r"^place_order$"),
+		],
+		MenuState.USER_DETAILS: [
+			user_details_handler,
 			CallbackQueryHandler(save_supplier_rating_callback, pattern=r"^save_rating"),
 			CallbackQueryHandler(set_user_rating_callback, pattern=r"^rate"),
 		],
 		MenuState.DESIGNER_EVENTS: [
 			CallbackQueryHandler(select_events_callback, pattern=r"^event_type_\d+$"),
-		],
-		MenuState.DESIGNER_EXCHANGE: [
-			CallbackQueryHandler(place_exchange_order_callback, pattern=r"^place_exchange_order$"),
 		],
 		MenuState.DESIGNER_SANDBOX: [
 			CallbackQueryHandler(select_sandbox_callback, pattern=r"^sandbox_type_\d+$"),
