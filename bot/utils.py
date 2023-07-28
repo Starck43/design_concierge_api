@@ -240,11 +240,11 @@ def update_inline_keyboard(
 
 	for row in inline_keyboard:
 		new_row = []
-		buttons_count = len(row)
+		rate_value = len(row)
 		for button in row:
 			if button_type == 'rate':
 				rate = int(active_value)
-				level = rate / buttons_count
+				level = rate / rate_value
 				if int(button.callback_data[-1]) <= rate:
 					if level > 0.7:
 						symbol = "🟩"
@@ -441,7 +441,7 @@ def format_output_link(caption: str = '', link_text: str = '', src: str = '', li
 	return format_output_text(caption, url, default_sep=" ")
 
 
-def rating_to_string(rates: dict, questions: dict, rate_value: int = 8) -> str:
+def rates_to_string(rates: dict, questions: dict, rate_value: int = 8) -> str:
 	if not rates or not questions:
 		return ""
 
@@ -465,7 +465,7 @@ def rating_to_string(rates: dict, questions: dict, rate_value: int = 8) -> str:
 			symbol = "🟧️"
 
 		empty_rate = "⬜" * (rate_value - rate)
-		result += f"{name}:\n{symbol * rate}{empty_rate}\n"
+		result += f"{name} ({rate}/{rate_value}):\n{symbol * rate}{empty_rate}\n"
 
 	return result
 

@@ -27,6 +27,11 @@ DESIGNER_KEYBOARD = [
 ]
 
 DESIGNER_SERVICES_KEYBOARD = [
+	["Новый заказ", "Мои заказы"],
+	BACK_KEYBOARD + TO_TOP_KEYBOARD,
+]
+
+DESIGNER_AND_OUTSOURCER_SERVICES_KEYBOARD = [
 	["Новый заказ", "Мои заказы", "Все заказы"],
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
@@ -62,7 +67,7 @@ OUTSOURCER_KEYBOARD = [
 ]
 
 OUTSOURCER_SERVICES_KEYBOARD = [
-	["В исполнении"],
+	["Заказы в работе"],
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
 

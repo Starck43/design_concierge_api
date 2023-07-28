@@ -10,7 +10,7 @@ from bot.constants.messages import introduce_reg_message, yet_registered_message
 from bot.constants.patterns import (CANCEL_PATTERN, REGISTRATION_PATTERN, DONE_PATTERN)
 from bot.handlers.common import catch_server_error, load_user_field_names, load_regions
 from bot.handlers.registration import (
-	success_join_callback, choose_categories_callback, choose_telegram_username_callback,
+	choose_categories_callback, choose_telegram_username_callback,
 	confirm_region_callback, choose_top_region_callback,
 	interrupt_registration_callback, approve_verification_code_callback, end_registration,
 	cancel_registration_choice, introduce_callback, name_choice, work_experience_choice, categories_choice,
@@ -151,7 +151,6 @@ registration_dialog = ConversationHandler(
 	},
 	fallbacks=[
 		CallbackQueryHandler(interrupt_registration_callback),
-		CallbackQueryHandler(success_join_callback, pattern="share_link"),
 		cancel_reg_handler,
 	],
 )

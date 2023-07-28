@@ -2,10 +2,10 @@ import requests
 from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel
+from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, Count
 from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError
-from rest_framework.generics import get_object_or_404
+from rest_framework.generics import get_object_or_404, ListAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -182,7 +182,15 @@ class UserDetail(APIView):
 		return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class UpdateRates(APIView):
+class RatingListView(ListAPIView):
+	serializer_class = RateSerializer
+
+	def get_queryset(self):
+		receiver_id = self.kwargs['receiver_id']
+		return Rate.objects.filter(receiver_id=receiver_id)
+
+
+class UpdateRatingView(APIView):
 	# Использовать вместе с токеном в заголовке запроса
 	# permission_classes = (IsAuthenticated,)
 	lookup_field = 'user_id'
@@ -235,7 +243,7 @@ class OrderRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
 
 
 # Получение списка вопросов для выставления рейтинга
-class RateQuestionView(APIView):
+class RateQuestionsView(APIView):
 	def get(self, request):
 		try:
 			fields = Rate._meta.get_fields()

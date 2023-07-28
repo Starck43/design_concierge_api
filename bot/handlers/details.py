@@ -5,10 +5,13 @@ from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import SEGMENT_KEYBOARD
 from bot.constants.menus import back_menu
-from bot.constants.messages import offer_to_set_segment_message, show_rating_title_message
-from bot.handlers.common import get_state_menu, get_user_rating_data
+from bot.constants.messages import (
+	offer_to_set_segment_message, show_detail_rating_message, offer_to_show_authors_for_user_rating_message,
+	show_rating_authors_list_message
+)
+from bot.handlers.common import get_state_menu, get_user_rating_data, load_rating_authors
 from bot.utils import (
-	extract_fields, rating_to_string, format_output_text, format_output_link, detect_social, generate_map_url,
+	extract_fields, rates_to_string, format_output_text, format_output_link, detect_social, generate_map_url,
 	calculate_years_of_work
 )
 
@@ -23,6 +26,7 @@ async def user_details(
 	# TODO: Решить какие поля скрывать для базового тарифа (show_all)
 	chat_data = context.chat_data
 	chat_data.pop("saved_details_message", None)  # почистим сохраненное сообщение с карточкой пользователя
+	chat_data["last_message_ids"] = {}
 
 	selected_user = chat_data.get("selected_user")
 	if selected_user is None:
@@ -72,12 +76,35 @@ async def user_details(
 	)
 
 	if max(selected_user["groups"]) == 2 and not selected_user["user_id"] and not selected_user["segment"]:
-		await offer_to_set_segment_message(query.message)
+		message = await offer_to_set_segment_message(query.message)
+		chat_data["last_message_ids"]["offer_set_segment"] = message.message_id
 
-	_, _, avg_rating_text = get_user_rating_data(context, selected_user)
+	questions, rates = get_user_rating_data(context, selected_user)
+	rating_text = rates_to_string(rates, questions, rate_value=8)
 
-	message = await show_rating_title_message(query.message, avg_rating_text)
+	message = await show_detail_rating_message(query.message, rating_text)
 	chat_data["saved_rating_message"] = message
-	chat_data["last_message_id"] = message.message_id
+	chat_data["last_message_ids"]["rating"] = message.message_id
+
+	if rates:
+		message = await offer_to_show_authors_for_user_rating_message(query.message, user=selected_user)
+		chat_data["last_message_ids"]["offer_to_show_authors"] = message.message_id
 
 	return reply_message
+
+
+async def show_authors_for_user_rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	# Выведем список авторов рейтинга для текущего пользователя
+	query = update.callback_query
+
+	await query.answer()
+	chat_data = context.chat_data
+	selected_user = chat_data.get("selected_user")
+
+	if selected_user:
+		rating_authors_list = await load_rating_authors(query.message, context, receiver_id=selected_user["id"])
+		if rating_authors_list:
+			await show_rating_authors_list_message(query.message, rating_authors_list)
+
+	else:
+		return None

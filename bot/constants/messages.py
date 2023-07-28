@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Tuple
 
 from telegram import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, \
 	Document, PhotoSize
@@ -64,7 +64,7 @@ async def restricted_registration_message(message: Message) -> None:
 		f'_В настоящий момент доступ в Консьерж Сервис ограничен, '
 		f'так как Вы не указали при регистрации ссылку на свои ресурсы\n'
 		f'Вы можете самостоятельно добавить ссылку в своем профиле '
-		f'или направить нам фото документов, подтверждающих что Вы являетесь дизайнером или архитектором_',
+		f'или прикрепить нам фото документов, подтверждающих что Вы являетесь дизайнером или архитектором_',
 		reply_markup=start_menu
 	)
 
@@ -324,7 +324,25 @@ async def offer_to_save_rating_message(message: Message) -> Message:
 	)
 
 
-async def show_rating_title_message(message: Message, text: str = "") -> Message:
+async def offer_to_show_authors_for_user_rating_message(message: Message, user: dict) -> Message:
+	button = generate_inline_keyboard(
+		[f'Посмотреть участников ({user["rate_count"]})'],
+		callback_data=str(user["id"]),
+		prefix_callback_name="authors_for_user_rating_"
+	)
+
+	return await message.reply_text(
+		"Посмотреть всех кто выставил оценки:",
+		reply_markup=button,
+	)
+
+
+async def show_rating_authors_list_message(message: Message, authors_list: list) -> Message:
+	text = data_list_to_string(authors_list, field_names=["author_name", "⭐️", "avg_rating"])
+	return await message.edit_text('*В рейтинге участвовали:*\n\n' + text, reply_markup=None)
+
+
+async def show_detail_rating_message(message: Message, text: str = "") -> Message:
 	text = "\n" + text if text else ""
 	return await message.reply_text(
 		f'\n{format_output_text("`Общий рейтинг`", text, default_value=" отсутствует", value_tag="_")}'
@@ -378,6 +396,18 @@ async def show_after_set_segment_message(message: Message, segment: int = None) 
 	await message.edit_text(
 		f'Спасибо за Ваш выбор! ❤️',
 		reply_markup=None,
+	)
+
+
+async def add_new_user_message(message: Message, category: dict) -> Message:
+	new_user_buttons = generate_inline_keyboard(
+		["Добавить компанию"],
+		callback_data=str(category["group"]),
+		prefix_callback_name="add_new_user_",
+	)
+	return await message.reply_text(
+		text=f'_Вы можете предложить свою компанию в категории {category["name"].upper()}_',
+		reply_markup=new_user_buttons
 	)
 
 
@@ -438,9 +468,38 @@ async def show_designer_order_message(message: Message, category: str = None) ->
 		callback_data="place_order"
 	)
 	return await message.reply_text(
-		f'Разместите новый заказ на бирже из категории {category.upper()}',
+		f'Разместите новый заказ в категории {category.upper()}',
 		reply_markup=button,
 	)
+
+
+async def show_designer_active_orders_message(message: Message, orders: list) -> Tuple[Message, Union[Message, None]]:
+	if not orders:
+		message = await message.reply_text(
+			f'На данный момент нет новых заказов.',
+			reply_markup=back_menu
+		)
+		return message, None
+
+	message = await message.reply_text(
+		f'*Список активных заказов на услуги.*\n'
+		f'_Выбирайте интересующий заказ и нажимайте Откликнуться_',
+		reply_markup=back_menu
+	)
+
+	order_buttons = generate_inline_keyboard(
+		orders,
+		item_key="title",
+		callback_data="id",
+		prefix_callback_name="order_"
+	)
+
+	inline_message =  await message.reply_text(
+		f'Список заказов:',
+		reply_markup=order_buttons
+	)
+
+	return message, inline_message
 
 
 async def select_events_message(message: Message, text: str = None) -> Message:
@@ -459,10 +518,10 @@ async def choose_sandbox_message(message: Message, text: str = None) -> Message:
 	buttons = generate_inline_keyboard(
 		DESIGNER_SANDBOX_KEYBOARD,
 		prefix_callback_name="sandbox_type_",
-		vertical=True
+		vertical=False
 	)
 	return await message.reply_text(
-		text or f'Выберите необходимую группу ниже:',
+		text or f'Выберите интересующую группу:',
 		reply_markup=buttons,
 	)
 

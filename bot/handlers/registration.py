@@ -3,7 +3,6 @@ import re
 from typing import Optional, Union
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message, ReplyKeyboardRemove
-from telegram.error import TelegramError
 from telegram.ext import ExtBot, ContextTypes, ConversationHandler
 
 from bot.bot_settings import CHANNEL_ID
@@ -11,8 +10,8 @@ from bot.constants.keyboards import SEGMENT_KEYBOARD, CANCEL_REG_KEYBOARD
 from bot.constants.menus import cancel_reg_menu, continue_reg_menu
 from bot.constants.messages import (
 	only_in_list_warn_message, show_categories_message, required_category_warn_message, confirm_region_message,
-	not_found_region_message, added_new_region_message, region_selected_warn_message, share_link_message,
-	interrupt_reg_message, not_detected_region_message, show_additional_regions_message, not_validated_warn_message,
+	not_found_region_message, added_new_region_message, region_selected_warn_message, interrupt_reg_message,
+	not_detected_region_message, show_additional_regions_message, not_validated_warn_message,
 	show_main_region_message, submit_reg_data_message, success_registration_message, offer_to_cancel_action_message,
 	offer_to_select_segment_message, offer_to_input_address_message,
 	required_region_warn_message, update_top_regions_message, offer_to_input_socials_message,
@@ -21,8 +20,8 @@ from bot.constants.messages import (
 )
 from bot.constants.patterns import DONE_PATTERN, CONTINUE_PATTERN
 from bot.handlers.common import (
-	check_user_in_channel, send_error_to_admin, delete_messages_by_key, catch_server_error, create_registration_link,
-	edit_last_message, load_categories, set_priority_group
+	send_error_to_admin, delete_messages_by_key, catch_server_error, create_registration_link,
+	edit_last_message, load_categories, set_priority_group, invite_user_to_chat
 )
 from bot.logger import log
 from bot.sms import SMSTransport
@@ -42,7 +41,7 @@ async def generate_reg_data_report(message: Message, context: ContextTypes.DEFAU
 	category_list = extract_fields(list(user_details.get("categories", {}).values()), field_names="name")
 	main_region = user_details["main_region"]
 	regions = user_details["regions"]
-	main_region_name = regions.pop(main_region) # необходимо перед сохранением удалить основной регион из общего списка
+	main_region_name = regions.pop(main_region)  # необходимо перед сохранением удалить основной регион из общего списка
 	region_list = list(regions.values())
 	years_of_work = calculate_years_of_work(user_details.get("work_experience", None), absolute_value=True)
 	segment = SEGMENT_KEYBOARD[user_details.get("segment")] if user_details.get("segment") else ""
@@ -118,12 +117,15 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 				log.info(f"Access restricted for user {user.full_name} (ID:{user.id}).")
 
 				await restricted_registration_message(update.message)
-				await share_files_message(update.message, "Отправьте нам файлы сейчас или в любое удобное время.")
+				await share_files_message(
+					update.message,
+					"Вы можете прикрепить и отправить нам файлы сейчас или в любое удобное время."
+				)
 
 			else:
 				await success_registration_message(update.message)
 
-			await invite_user_to_channel(update, context, CHANNEL_ID)
+			await invite_user_to_chat(update, user_details["user_id"], chat_id=CHANNEL_ID)
 
 		else:
 			await catch_server_error(update.message, context, error_data=res)
@@ -684,41 +686,3 @@ async def repeat_input_phone_callback(update: Update, context: ContextTypes.DEFA
 	context.user_data["details"]["phone"] = ""
 	await edit_last_message(query, context, text="*Введите номер телефона:*")
 	context.chat_data["reg_state"] = RegState.VERIFICATION
-
-
-async def invite_user_to_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, channel_id: int) -> bool:
-	user_details = context.user_data["details"]
-	try:
-		invite_link = await context.bot.export_chat_invite_link(chat_id=channel_id)
-
-		# Проверяем, что пользователь еще не присоединен к каналу
-		is_member = await check_user_in_channel(user_details["user_id"], context.bot)
-		if is_member:
-			message_text = f'{user_details["username"]}, Вы уже присоединены к каналу.'
-		else:
-			message_text = f"Присоединяйтесь к нашему каналу Консьерж для Дизайнеров"
-
-		await share_link_message(
-			update.message,
-			link=invite_link,
-			link_text="Перейти в канал",
-			text=message_text
-		)
-
-		return not is_member
-
-	except TelegramError:
-		await update.message.reply_text(
-			"⚠️ Не удалось присоединить к нашему каналу!\n"
-			"Попробуйте его найти самостоятельно."
-		)
-		return False
-
-
-async def success_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	print("user is clicked on the link")
-
-
-async def revoke_invite_link(channel_id: int, invite_link: str, bot_: ExtBot) -> None:
-	await bot_.revoke_chat_invite_link(chat_id=channel_id, invite_link=invite_link)
-	log.info(f"Link was revoked")

@@ -20,6 +20,7 @@ TARIFF_PATTERN = r'тариф'
 USER_RATE_PATTERN = r'рейтинг|оценка|оценить(.*поставщика)'
 USER_FEEDBACK_PATTERN = r'отзыв'
 SUPPLIERS_SEARCH_PATTERN = r'поиск|отбор|подбор|найти|искать|подобрать|отобрать|отфильтровать'
+ACTIVE_ORDERS_PATTERN = r'все заказы|активные заказы'
 
 DESIGNER_PATTERN = r'' + flatten_list(DESIGNER_KEYBOARD[0:3], exclude=PROFILE_KEYBOARD, delimiter="|")
 USER_DETAILS_PATTERN = r'' + flatten_list(USER_DETAILS_KEYBOARD[0], delimiter="|")

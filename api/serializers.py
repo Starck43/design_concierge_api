@@ -65,6 +65,7 @@ class UserDetailSerializer(UserListSerializer):
 	main_region = RegionSerializer(many=False, read_only=True, partial=True)
 	average_rating = serializers.SerializerMethodField()
 	designer_rating = serializers.SerializerMethodField()
+	rate_count = serializers.SerializerMethodField()
 	has_given_rating = serializers.BooleanField(read_only=True)
 
 	class Meta:
@@ -92,6 +93,9 @@ class UserDetailSerializer(UserListSerializer):
 			designer_rating = obj.calculate_average_rating(designer)
 			return self.format_rating(designer_rating)
 		return {}
+
+	def get_rate_count(self, obj):
+		return obj.get_rate_count()
 
 	def to_internal_value(self, data):
 		validated_data = super().to_internal_value(data)
@@ -146,9 +150,18 @@ class FavouriteSerializer(serializers.ModelSerializer):
 
 
 class RateSerializer(serializers.ModelSerializer):
+	avg_rating = serializers.SerializerMethodField(read_only=True)
+
 	class Meta:
 		model = Rate
-		fields = '__all__'
+		fields = ['avg_rating']
+
+	def to_representation(self, instance):
+		return {
+			'author_id': instance.author.id,
+			'author_name': str(instance.author),
+			'avg_rating': instance.calculate_average_rate()
+		}
 
 
 class FeedbackSerializer(serializers.ModelSerializer):

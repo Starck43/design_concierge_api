@@ -1,10 +1,9 @@
 from django.urls import path
 from .views import (
-	RateQuestionView, CategoryList, CategoryDetail, UserList, UserDetail, UpdateRates, RegionList, RegionDetail,
-	UserFieldNamesView, FileUploadView, OrderListCreateView, OrderRetrieveUpdateDestroyView
+	RateQuestionsView, CategoryList, CategoryDetail, UserList, UserDetail, UpdateRatingView, RegionList, RegionDetail,
+	UserFieldNamesView, FileUploadView, OrderListCreateView, OrderRetrieveUpdateDestroyView, RatingListView
 )
 
-# app_name = 'api'
 
 urlpatterns = [
 	path('regions/', RegionList.as_view(), name='region-list'),
@@ -14,15 +13,17 @@ urlpatterns = [
 	path('users/', UserList.as_view(), name='user-list'),
 	path('users/<int:pk>/', UserDetail.as_view(), name='user-detail'),
 	path('users/create/', UserDetail.as_view(), name='user-create'),
-	path('users/<str:user_id>/update_ratings/', UpdateRates.as_view(), name='update-user-ratings'),
+	path('users/<str:user_id>/update_ratings/', UpdateRatingView.as_view(), name='update-user-ratings'),
 	path('users/<str:user_id>/upload/', FileUploadView.as_view(), name='files-upload'),
 
 	path('orders/', OrderListCreateView.as_view(), name='order-list'),
 	path('orders/<int:pk>/', OrderRetrieveUpdateDestroyView.as_view(), name='order-detail'),
 
+	path('rating/<int:receiver_id>/authors/', RatingListView.as_view(), name='rating-authors'),
+	path('rating/questions/', RateQuestionsView.as_view(), name='rate-questions'),
+
 	# path('regions/', RegionList.as_view(), name='region-list'),
 	path('user_field_names/', UserFieldNamesView.as_view(), name='user_field_names'),
-	path('rating_questions/', RateQuestionView.as_view(), name='rating-questions'),
 ]
 
 # примеры запросов:
@@ -51,5 +52,7 @@ urlpatterns = [
 # orders/ (GET, POST) - получение списка заказов и создание нового заказа пользователя
 # orders/<id>/ (GET, PUT, PATCH, DELETE) - получение заказа, обновление и удаление заказа пользователя с id
 
+# rating/<int:receiver_id>/authors/ (GET) - получение списка авторов, которые выставили оценки пользователю с receiver_id
+# rating/questions/ (GET) - получение списка вопросов для рейтинга
+
 # user_field_names/ (GET) - получение имен полей данных пользователя
-# rating_questions/ (GET) - получение списка вопросов для рейтинга

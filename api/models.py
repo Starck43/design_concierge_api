@@ -210,6 +210,9 @@ class User(models.Model):
 		)
 		return rates
 
+	def get_rate_count(self):
+		return self.received_rate.count()
+
 	def get_token(self):
 		if self.access > 0:
 			return self.generate_token()
@@ -295,9 +298,9 @@ class Rate(models.Model):
 	)
 	quality = models.PositiveSmallIntegerField('Качество продукции', null=True, blank=True)
 	deadlines = models.PositiveSmallIntegerField('Соблюдение сроков')
-	sales_service_quality = models.PositiveSmallIntegerField('Качество сервиса при продаже товаров/услуг')
+	sales_service_quality = models.PositiveSmallIntegerField('Качество сервиса при продаже')
 	service_delivery_quality = models.PositiveSmallIntegerField(
-		'Качество сервиса при установке/выполнении работ',
+		'Качество сервиса при выполнении работ',
 		help_text='(если это предусмотрено характером продажи или услуги)',
 		null=True,
 		blank=True,

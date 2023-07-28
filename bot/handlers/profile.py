@@ -80,7 +80,7 @@ async def profile_options_choice(update: Update, context: ContextTypes.DEFAULT_T
 		"markup": back_menu,
 		"inline_markup": None
 	})
-	chat_data["saved_message_ids"] = [inline_message.message_id]
+	chat_data["last_message_ids"] = [inline_message.message_id]
 
 	return state
 

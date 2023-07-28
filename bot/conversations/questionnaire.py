@@ -23,11 +23,10 @@ from bot.utils import generate_reply_keyboard
 async def questionnaire_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	"""Начало диалога по команде /questionnaire или сообщении questionnaire"""
 	chat_data = context.chat_data
-
 	chat_data["previous_state"] = ConversationHandler.END
 	chat_data["current_state"] = QuestState.START
 	chat_data["chat_id"] = update.effective_chat.id
-	print("chat id after setting", chat_data["chat_id"])
+
 	parameters = context.args
 	if not update.message:
 		query = update.callback_query

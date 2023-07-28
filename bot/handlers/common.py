@@ -1,11 +1,11 @@
 from typing import Union, List, Dict, Optional, ValuesView, Tuple, Any
 
-from telegram import Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery
-from telegram.constants import ParseMode
+from telegram import Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery, Bot, helpers, ChatMember
+from telegram.constants import ParseMode, ChatMemberStatus
 from telegram.error import TelegramError
-from telegram.ext import ExtBot, ContextTypes
+from telegram.ext import ContextTypes
 
-from bot.bot_settings import ADMIN_CHAT_ID, CHANNEL_ID
+from bot.bot_settings import ADMIN_CHAT_ID
 from bot.constants.keyboards import BACK_KEYBOARD
 from bot.constants.menus import main_menu, done_menu, back_menu
 from bot.constants.messages import (
@@ -14,8 +14,10 @@ from bot.constants.messages import (
 from bot.logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
-from bot.utils import (fetch_data, filter_list, generate_inline_keyboard, fetch_user_data, find_obj_in_list,
-                       rating_to_string, extract_fields, match_message_text)
+from bot.utils import (
+	fetch_data, filter_list, generate_inline_keyboard, fetch_user_data, find_obj_in_list, extract_fields,
+	match_message_text
+)
 
 
 async def user_authorization(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[bool]:
@@ -40,15 +42,6 @@ async def user_authorization(update: Update, context: ContextTypes.DEFAULT_TYPE)
 		return True
 
 
-async def check_user_in_channel(user_id: int, bot: ExtBot) -> bool:
-	"""Проверяет наличие пользователя в группе"""
-	try:
-		member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-		return bool(member)
-	except TelegramError:
-		return False
-
-
 async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int = -2) -> Optional[Message]:
 	""" Переход вверх по меню """
 	query = update.callback_query
@@ -58,54 +51,78 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 		query = update
 
 	await query.message.delete()
-	index = level if match_message_text(BACK_KEYBOARD[0], query.message.text) else 0
 
 	current_menu = get_state_menu(context)
+	current_message = current_menu[1]
 	current_inline_message = current_menu[2]
-	if current_menu[1]:
-		await delete_messages_by_key(context, current_menu[1])
+	await delete_messages_by_key(context, current_message)
+	await delete_messages_by_key(context, current_inline_message)
 
-	if current_inline_message:
-		await delete_messages_by_key(context, current_inline_message)
-
+	# если нажата кнопка Назад, то вернем предыдущее состояние меню, иначе переходим в начальное состояние
+	index = level if match_message_text(BACK_KEYBOARD[0], query.message.text) else 0
 	prev_menu = extract_state_menu(context, index)
+
 	if not prev_menu:
 		init_menu = await init_start_menu(context)
-		return init_menu["state"]
+		await delete_messages_by_key(context, "last_message_id")
+		state = init_menu["state"]
 
-	state, reply_message, inline_message, markup, inline_markup = prev_menu
+	else:
+		state, reply_message, inline_message, markup, inline_markup = prev_menu
 
-	if reply_message:
-		message = await query.message.reply_text(
-			text=reply_message.text_markdown,
-			reply_markup=markup
-		)
-		context.chat_data["menu"][-1]["message"] = message
-
-	if inline_message:
-		if current_inline_message and not reply_message:
-			message = await context.bot.edit_message_text(
-				text=inline_message.text_markdown,
-				chat_id=query.message.chat_id,
-				message_id=current_inline_message.message_id,
-				reply_markup=inline_markup or inline_message.reply_markup
+		if reply_message:
+			reply_message = await query.message.reply_text(
+				text=reply_message.text_markdown,
+				reply_markup=markup
 			)
+		else:
+			reply_message = None
+
+		if inline_message:
+			if current_inline_message and not reply_message:
+				inline_message = await context.bot.edit_message_text(
+					text=inline_message.text_markdown,
+					chat_id=query.message.chat_id,
+					message_id=current_inline_message.message_id,
+					reply_markup=inline_markup or inline_message.reply_markup
+				)
+
+			else:
+				inline_message = await query.message.reply_text(
+					text=inline_message.text_markdown,
+					reply_markup=inline_markup or inline_message.reply_markup
+				)
+
+			last_message_id = context.chat_data.get("last_message_id")
+			# если последнее сохраненное сообщение было заменено на новое выше, то не удаляем его
+			if last_message_id and last_message_id != inline_message.message_id:
+				await delete_messages_by_key(context, "last_message_id")
+		else:
+			await delete_messages_by_key(context, "last_message_id")
+			inline_message = None
+
+		context.chat_data["menu"][-1].update({
+			"message": reply_message,
+			"inline_message": inline_message
+		})
+
+	await delete_messages_by_key(context, "last_message_ids")
+
+	saved_message: Message = context.chat_data.get("saved_message")
+	if saved_message:
+		if index == 0:
+			# если поднимаемся в начало меню, то удалим сообщение "saved_message", если оно было сохранено
+			await delete_messages_by_key(context, saved_message)
 
 		else:
-			message = await query.message.reply_text(
-				text=inline_message.text_markdown,
-				reply_markup=inline_markup or inline_message.reply_markup
-			)
-			context.chat_data["menu"][-1]["inline_message"] = message
-
-		last_message_id = context.chat_data.get("last_message_id")
-		# если последнее сохраненное сообщение было заменено на новое выше, то не удаляем его
-		if last_message_id and last_message_id != message.message_id:
-			await delete_messages_by_key(context, "last_message_id")
-	else:
-		await delete_messages_by_key(context, "last_message_id")
-
-	await delete_messages_by_key(context, "saved_message_ids")
+			try:
+				await saved_message.reply_text(
+					saved_message.text,
+					reply_markup=saved_message.reply_markup
+				)
+			except TelegramError:
+				pass
+			del context.chat_data["saved_message"]
 
 	return state
 
@@ -157,6 +174,7 @@ def extract_state_menu(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> O
 			index = len(menu) + index
 			obj = menu[index]
 			chat_data["menu"] = menu[:index + 1]
+
 		else:
 			obj = menu[index]
 			chat_data["menu"] = menu[0:index + 1]
@@ -173,7 +191,6 @@ async def edit_last_message(
 		text: str,
 		reply_markup: Union[ReplyKeyboardMarkup, InlineKeyboardMarkup] = None
 ) -> Message:
-
 	chat_data = context.chat_data
 	last_message_id = chat_data.get("last_message_id")
 
@@ -203,7 +220,10 @@ async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, message: Un
 
 	if isinstance(message, Message):
 		message_id = message.message_id
-		await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+		try:
+			await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+		except TelegramError:
+			pass
 		return
 
 	message_id = context.chat_data.get(message)
@@ -212,17 +232,36 @@ async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, message: Un
 		return
 
 	if isinstance(message_id, int):
-		await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+		try:
+			await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+		except TelegramError:
+			pass
 
-	if isinstance(message_id, dict):
-		for value in message_id.values():
-			await context.bot.delete_message(chat_id=chat_id, message_id=value)
+	try:
+		if isinstance(message_id, dict):
+			for value in message_id.values():
+				await context.bot.delete_message(chat_id=chat_id, message_id=value)
 
-	if isinstance(message_id, list):
-		for value in message_id:
-			await context.bot.delete_message(chat_id=chat_id, message_id=value)
+		if isinstance(message_id, list):
+			for value in message_id:
+				await context.bot.delete_message(chat_id=chat_id, message_id=value)
+
+	except TelegramError:
+		pass
 
 	del context.chat_data[message]
+
+
+def is_designer(context: ContextTypes.DEFAULT_TYPE) -> bool:
+	""" Проверим состоит ли пользователь в группе дизайнер"""
+	user_groups = context.user_data["details"]["groups"]
+	return 0 in user_groups
+
+
+def is_outsourcer(context: ContextTypes.DEFAULT_TYPE) -> bool:
+	""" Проверим состоит ли пользователь в группе аутсорсер"""
+	user_groups = context.user_data["details"]["groups"]
+	return 1 in user_groups
 
 
 def set_priority_group(context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -245,15 +284,14 @@ def set_priority_group(context: ContextTypes.DEFAULT_TYPE) -> int:
 	return group
 
 
-def get_user_rating_data(context: ContextTypes.DEFAULT_TYPE, user: dict) -> Tuple[dict, dict, str]:
-	""" Возвращаем вопросы для анкетирования, текущий детальный рейтинг в виде объекта и в виде строки """
-	group = max(user.get("groups"))
-	rating_questions = context.bot_data["rating_questions"][group - 1] if group else {}
+def get_user_rating_data(context: ContextTypes.DEFAULT_TYPE, user: dict) -> Tuple[dict, dict]:
+	""" Возвращаем вопросы для анкетирования, подробный рейтинг в виде объекта и в виде строки """
 	rating = user.get("average_rating", {})
-	rating_text = rating_to_string(rating, rating_questions)
+	group = max(user.get("groups"))
+	rating_questions = context.bot_data["rate_questions"][group - 1] if group else {}
 
-	return rating_questions, rating, rating_text
-	
+	return rating_questions, rating
+
 
 async def update_ratings(
 		message: Message,
@@ -261,7 +299,7 @@ async def update_ratings(
 		user_id: str,
 		data: any
 ) -> Optional[List[dict]]:
-	await delete_messages_by_key(context, "saved_message_ids")
+	await delete_messages_by_key(context, "last_message_ids")
 
 	res = await fetch_user_data(user_id, "/update_ratings", data=data, method="POST")
 	if res["status_code"] == 304:
@@ -290,12 +328,12 @@ async def check_required_user_group_rating(message: Message, context: ContextTyp
 	questions_rated_count = len(rates.items()) - 1 if rates else 0
 
 	if group == 1 and questions_rated_count < 2 or group == 2 and questions_rated_count < 6:
-		saved_message = await message.reply_text(
+		message = await message.reply_text(
 			f"*Необходимо оценить все критерии!*\n"
 			f"Отмечено: _{questions_rated_count}_ из _{questions_count}_",
 			# reply_markup=continue_menu
 		)
-		chat_data["last_message_id"] = saved_message.message_id
+		chat_data["last_message_id"] = message.message_id
 		return True
 
 	return False
@@ -370,22 +408,20 @@ async def load_user(
 		context: ContextTypes.DEFAULT_TYPE,
 		user_id: int,
 		designer_id: Optional[int] = None,
-) -> Optional[dict]:
-
-	if not user_id:
-		return None
-
+) -> Tuple[Optional[dict], Optional[Message]]:
 	params = {"related_user": designer_id} if designer_id is not None else {}
 	res = await fetch_user_data(user_id, params=params)
 	data: dict = res["data"]
+	reply_message = None
+
 	if data is None:
 		text = "Ошибка чтения данных пользователя."
-		await catch_server_error(message, context, error_data=res, text=text, reply_markup=None)
+		reply_message = await catch_server_error(message, context, error_data=res, text=text, reply_markup=None)
 
 	if data:
 		data.setdefault("name", data["username"])
 
-	return data
+	return data, reply_message
 
 
 async def load_regions(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[list], Optional[list]]:
@@ -398,14 +434,49 @@ async def load_regions(message: Message, context: ContextTypes.DEFAULT_TYPE) -> 
 	return res["data"], filter_list(res["data"], "in_top", 1)
 
 
+async def load_orders(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		id: int = "",
+		params: dict = None
+) -> Union[list, dict, None]:
+	orders = context.chat_data.get("orders")
+	if id and orders:
+		# попытка найти заказ в загруженном ранее списке заказов
+		data, _ = find_obj_in_list(orders, {"id": id})
+		if data:
+			return data
+
+	res = await fetch_data(f"/orders/{id}", params=params)
+	data = res["data"]
+
+	if not data:
+		text = f'Ошибка загрузки заказ{"а" if id else "ов"}'
+		await catch_server_error(message, context, error_data=res, text=text)
+
+	if isinstance(data, list):
+		if orders is None or len(data) != len(orders):
+			context.chat_data["orders"] = data
+
+	return data
+
+
 async def load_rating_questions(
 		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
-		params: dict = None
 ) -> Tuple[Optional[list], str]:
-	res = await fetch_data("/rating_questions", params=params or {})
+	res = await fetch_data("/rating/questions/")
 	if not res["data"]:
 		text = "Ошибка загрузки вопросов для рейтинга"
+		await catch_server_error(message, context, error_data=res, text=text)
+
+	return res["data"]
+
+
+async def load_rating_authors(message: Message, context: ContextTypes.DEFAULT_TYPE, receiver_id: int) -> list:
+	res = await fetch_data(f"/rating/{receiver_id}/authors/")
+	if not res["data"]:
+		text = "Ошибка загрузки списка голосовавших"
 		await catch_server_error(message, context, error_data=res, text=text)
 
 	return res["data"]
@@ -424,49 +495,91 @@ async def load_user_field_names(
 	return res["data"]
 
 
+async def is_user_chat_member(bot: Bot, user_id: int, chat_id: Union[str, int]) -> bool:
+	""" Проверка наличия пользователя в группе или канале """
+	try:
+		member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+		return bool(member)
+	except TelegramError:
+		return False
+
+
+async def invite_user_to_chat(
+		update: Union[Update, CallbackQuery],
+		user_id: int,
+		chat_id: Union[str, int],
+		text: str = None,
+		is_group_chat: bool = False,
+) -> bool:
+	""" Добавляем пользователя в чат (канал/группа) """
+
+	chat_variants = ["каналу", "группе"]
+	chat_variant_text = chat_variants[int(is_group_chat)]
+	bot = update.get_bot()
+
+	try:
+		await bot.approve_chat_join_request(user_id=user_id, chat_id=chat_id)
+		print("approve")
+
+	except TelegramError:
+		pass
+
+	# Проверяем принадлежность пользователя к чату
+	is_member = await is_user_chat_member(bot, user_id, chat_id=chat_id)
+	if not is_member:
+		join_link = await bot.export_chat_invite_link(chat_id=chat_id)
+		join_button = generate_inline_keyboard(
+			[f'Присоединиться к {chat_variant_text}'],
+			url=join_link,
+		)
+		await update.message.reply_text(
+			text=text or "Присоединяйтесь к нашему каналу Консьерж для Дизайнера",
+			reply_markup=join_button
+		)
+
+	return is_member
+
+
 async def create_start_link(message: Message, context: ContextTypes.DEFAULT_TYPE) -> str:
 	# Отправляем сообщение с ссылкой для начала диалога
-	bot_username = context.bot.username
-	invite_link = f"https://t.me/{bot_username}?start=start"
+	url = helpers.create_deep_linked_url(context.bot.username, "start")
 
 	await share_link_message(
 		message,
-		link=invite_link,
-		link_text="Ссылка на Консьерж для дизайнеров",
-		text="Нажмите на кнопку Старт для начала работы"
+		link=url,
+		link_text="Ссылка на Консьерж Сервис",
+		text="Перейдите по ссылке для запуска Консьерж для дизайнера"
 	)
 
-	return invite_link
+	return url
 
 
 async def create_registration_link(message: Message, context: ContextTypes.DEFAULT_TYPE) -> str:
 	# Создаем ссылку для регистрации
-	bot_username = context.bot.username
-	invite_link = f"https://t.me/{bot_username}?start=register"
+	url = helpers.create_deep_linked_url(context.bot.username, "register")
 
 	await share_link_message(
 		message,
-		link=invite_link,
+		link=url,
 		link_text="Ссылка на регистрацию",
 		text="Ссылка на регистрацию в Консьерж для дизайнеров"
 	)
 
-	return invite_link
+	return url
 
 
 async def create_questionnaire_link(message: Message, context: ContextTypes.DEFAULT_TYPE) -> str:
 	# Создаем ссылку для анкетирования
-	bot_username = context.bot.username
-	invite_link = f"https://t.me/{bot_username}?start=questionnaire"
+	url = helpers.create_deep_linked_url(context.bot.username, "questionnaire")
 
 	await share_link_message(
 		message,
-		link=invite_link,
+		link=url,
 		link_text="Ссылка на анкетирование",
 		text="Для составления рейтинга поставщиков, предлагаем пройти анкетирование."
 	)
 
-	return invite_link
+	return url
 
 
 async def catch_server_error(
@@ -476,7 +589,7 @@ async def catch_server_error(
 		text: str = "",
 		auto_send_notification: bool = True,
 		reply_markup: Optional[ReplyKeyboardMarkup] = done_menu,
-) -> None:
+) -> Message:
 	user = message.chat
 
 	chat_data = context.chat_data
@@ -489,7 +602,7 @@ async def catch_server_error(
 	))
 
 	error_text = f'{chat_data["status_code"]}: {chat_data["error"]}\n'
-	await message.reply_text(
+	reply_message = await message.reply_text(
 		text or f"*Ошибка!*\n{error_text}\n\nПриносим свои извинения, {user.first_name}\n"
 		        f"Попробуйте в другой раз.",
 		reply_markup=reply_markup
@@ -497,8 +610,7 @@ async def catch_server_error(
 
 	if not auto_send_notification:
 		await message.reply_text(
-			"Вы можете известить администратора Консьерж Сервис, просто нажав на кнопку ниже.\n"
-			"Спасибо!",
+			"Вы можете уведомить администратора Консьерж Сервис о возникшей проблеме!\n",
 			reply_markup=generate_inline_keyboard(
 				["Отправить уведомление"],
 				callback_data="send_error"
@@ -506,6 +618,8 @@ async def catch_server_error(
 		)
 	else:
 		await send_error_to_admin(message, context, text=error_text)
+
+	return reply_message
 
 
 async def send_error_to_admin(
@@ -521,7 +635,7 @@ async def send_error_to_admin(
 	})
 
 	chat_data = context.chat_data.copy()
-	chat_data.pop("menu", None) # удалим состояние меню
+	chat_data.pop("menu", None)  # удалим состояние меню
 
 	if isinstance(text, dict):
 		text = ''.join('{}: {}\n'.format(key.replace("_", " "), val) for key, val in text.items())

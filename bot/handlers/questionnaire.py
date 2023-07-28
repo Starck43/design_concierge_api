@@ -34,8 +34,8 @@ async def start_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE
 		return QuestState.DONE
 
 	# подгрузим группы вопросов для рейтинга
-	context.bot_data.setdefault("rating_questions", await load_rating_questions(update.message, context))
-	if not context.bot_data.get("rating_questions"):
+	context.bot_data.setdefault("rate_questions", await load_rating_questions(update.message, context))
+	if not context.bot_data.get("rate_questions"):
 		return QuestState.DONE
 
 	await update.message.reply_text(
@@ -162,7 +162,7 @@ async def show_rating_questions(
 		if res:
 			await success_questionnaire_message(update.message)
 
-		await delete_messages_by_key(context, "saved_message_ids")
+		await delete_messages_by_key(context, "last_message_ids")
 
 		return await end_questionnaire(update, context)
 
@@ -186,16 +186,17 @@ async def show_user_rating_messages(
 
 	chat_data = context.chat_data
 	selected_user = chat_data["selected_user"]
-	rating_questions, avg_rating, _ = get_user_rating_data(context, selected_user)
+	rating_questions, avg_rating = get_user_rating_data(context, selected_user)
 	symbols = ['⬜️' for _ in range(rate_value)]
 
-	await delete_messages_by_key(context, "saved_message_ids")
-	chat_data["saved_message_ids"] = {}
+	await delete_messages_by_key(context, "last_message_ids")
+	chat_data["last_message_ids"] = {}
 	saved_message = await message.reply_text(text=title or selected_user["username"], reply_markup=reply_markup)
-	chat_data["saved_message_ids"].update({"title_id": saved_message.message_id})
+	chat_data["last_message_ids"].update({"title_id": saved_message.message_id})
 
 	for i, question in enumerate(rating_questions.keys()):
-		subtitle = f'{i+1}. *{rating_questions[question]}*'
+		current_rate = int(avg_rating.get(question) or 0)
+		subtitle = f'{i+1}. *{rating_questions[question]}* ({current_rate}/{rate_value})'
 
 		rate_markup = generate_inline_keyboard(
 			data=[symbols],
@@ -206,12 +207,12 @@ async def show_user_rating_messages(
 		if avg_rating:
 			rate_markup = update_inline_keyboard(
 				rate_markup.inline_keyboard,
-				active_value=str(int(avg_rating.get(question) or 0)),
+				active_value=str(current_rate),
 				button_type='rate'
 			)
 
 		saved_message = await message.reply_text(text=subtitle, reply_markup=rate_markup)
-		chat_data["saved_message_ids"].update({i: saved_message.message_id})
+		chat_data["last_message_ids"].update({i: saved_message.message_id})
 
 	return saved_message
 
@@ -266,7 +267,6 @@ async def set_user_rating_callback(update: Update, context: ContextTypes.DEFAULT
 	query = update.callback_query
 
 	await query.answer()
-	button_data = query.data
 	chat_data = context.chat_data
 
 	user_id = int(query.data.split('__')[1])

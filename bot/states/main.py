@@ -6,6 +6,7 @@ class MenuState(Enum):
     START: str = 'Основное меню'
     SUPPLIERS_REGISTER: str = 'Реестр поставщиков'
     OUTSOURCER_SERVICES: str = 'Биржа услуг'
+    ORDERS: str = 'Заказы дизайнеров'
     DESIGNER_EVENTS: str = 'Мероприятия'
     DESIGNER_SANDBOX: str = 'Барахолка'
     USER_DETAILS: str = "Карточка организации"
