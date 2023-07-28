@@ -34,7 +34,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optiona
 		"inline_markup": edit_profile_markup
 	})
 	# Вывод сообщений с данными пользователя
-	message = await user_details(update, context, title=title, full_data=True)
+	message = await user_details(update, context, title=title, show_all=True)
 	chat_data["menu"][-1].update({
 		"message": message,
 		"inline_message" : chat_data.get("saved_details_message", None)
