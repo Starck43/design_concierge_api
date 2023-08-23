@@ -9,7 +9,7 @@ from bot.constants.messages import (
 	offer_to_set_segment_message, show_detail_rating_message, offer_to_show_authors_for_user_rating_message,
 	show_rating_authors_list_message
 )
-from bot.handlers.common import get_state_menu, get_user_rating_data, load_rating_authors
+from bot.handlers.common import get_menu_item, get_user_rating_data, load_rating_authors
 from bot.utils import (
 	extract_fields, rates_to_string, format_output_text, format_output_link, detect_social, generate_map_url,
 	calculate_years_of_work
@@ -26,14 +26,14 @@ async def user_details(
 	# TODO: Решить какие поля скрывать для базового тарифа (show_all)
 	chat_data = context.chat_data
 	chat_data.pop("saved_details_message", None)  # почистим сохраненное сообщение с карточкой пользователя
-	chat_data["last_message_ids"] = {}
+	chat_data["last_message_ids"] = []
 
 	selected_user = chat_data.get("selected_user")
 	if selected_user is None:
 		await query.message.reply_text("Нет данных", reply_markup=back_menu)
 		return None
 
-	_, _, _, markup_menu, inline_markup = get_state_menu(context)
+	_, _, _, markup_menu, inline_markup = get_menu_item(context)
 
 	total_rate = f'⭐ {selected_user["total_rate"]}' if selected_user["total_rate"] else ""
 	full_name = selected_user.get("name", "")
@@ -45,13 +45,9 @@ async def user_details(
 	geo_link = generate_map_url(selected_user["address"], full_name)
 	phone_caption = "Позвонить" if selected_user["phone"] else ""
 
+	segment = ""
 	if max(selected_user["groups"]) == 2:
-		if selected_user["segment"]:
-			segment = SEGMENT_KEYBOARD[selected_user["segment"]]
-		else:
-			segment = "не установлен"
-	else:
-		segment = ""
+		segment = SEGMENT_KEYBOARD[selected_user["segment"]] if selected_user["segment"] else "не установлен"
 
 	reply_message = await query.message.reply_text(
 		(title or
@@ -77,18 +73,18 @@ async def user_details(
 
 	if max(selected_user["groups"]) == 2 and not selected_user["user_id"] and not selected_user["segment"]:
 		message = await offer_to_set_segment_message(query.message)
-		chat_data["last_message_ids"]["offer_set_segment"] = message.message_id
+		chat_data["last_message_ids"].append(message.message_id)
 
 	questions, rates = get_user_rating_data(context, selected_user)
 	rating_text = rates_to_string(rates, questions, rate_value=8)
 
 	message = await show_detail_rating_message(query.message, rating_text)
 	chat_data["saved_rating_message"] = message
-	chat_data["last_message_ids"]["rating"] = message.message_id
+	chat_data["last_message_ids"].uppend(message.message_id)
 
-	if rates:
+	if selected_user["rating_voices_count"] > 0:
 		message = await offer_to_show_authors_for_user_rating_message(query.message, user=selected_user)
-		chat_data["last_message_ids"]["offer_to_show_authors"] = message.message_id
+		chat_data["last_message_ids"].uppend(message.message_id)
 
 	return reply_message
 
