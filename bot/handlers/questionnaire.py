@@ -34,8 +34,8 @@ async def start_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE
 		return QuestState.DONE
 
 	# подгрузим группы вопросов для рейтинга
-	context.bot_data.setdefault("rate_questions", await load_rating_questions(update.message, context))
-	if not context.bot_data.get("rate_questions"):
+	context.bot_data.setdefault("rating_questions", await load_rating_questions(update.message, context))
+	if not context.bot_data.get("rating_questions"):
 		return QuestState.DONE
 
 	await update.message.reply_text(
@@ -144,12 +144,7 @@ async def show_users_in_category(update: Update, context: ContextTypes.DEFAULT_T
 	return chat_data["current_state"]
 
 
-async def show_rating_questions(
-		update: Update,
-		context: ContextTypes.DEFAULT_TYPE,
-		user_index: int = 0
-) -> str:
-	user_id = context.user_data["details"]["user_id"]
+async def show_rating_questions(update: Update, context: ContextTypes.DEFAULT_TYPE, user_index: int = 0) -> str:
 	chat_data = context.chat_data
 
 	# если достигнут конец списка
@@ -158,7 +153,7 @@ async def show_rating_questions(
 			await empty_questionnaire_list_message(update.message)
 
 		# сохраним результаты анкетирования
-		res = await update_ratings(update.message, context, user_id=user_id, data=chat_data["user_ratings"])
+		res = await update_ratings(update.message, context)
 		if res:
 			await success_questionnaire_message(update.message)
 
@@ -190,9 +185,8 @@ async def show_user_rating_messages(
 	symbols = ['⬜️' for _ in range(rate_value)]
 
 	await delete_messages_by_key(context, "last_message_ids")
-	chat_data["last_message_ids"] = {}
 	saved_message = await message.reply_text(text=title or selected_user["username"], reply_markup=reply_markup)
-	chat_data["last_message_ids"].update({"title_id": saved_message.message_id})
+	chat_data["last_message_ids"] = [saved_message.message_id]
 
 	for i, question in enumerate(rating_questions.keys()):
 		current_rate = int(avg_rating.get(question) or 0)
@@ -212,7 +206,7 @@ async def show_user_rating_messages(
 			)
 
 		saved_message = await message.reply_text(text=subtitle, reply_markup=rate_markup)
-		chat_data["last_message_ids"].update({i: saved_message.message_id})
+		chat_data["last_message_ids"].uppend(saved_message.message_id)
 
 	return saved_message
 

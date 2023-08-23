@@ -14,6 +14,8 @@ class MenuState(Enum):
     SUPPLIERS_SEARCH: str = 'Поиск поставщика'
     PROFILE: str = 'Профиль пользователя'
     TARIFF_CHANGE: str = 'Изменение тарифа'
+    FAVOURITE_CHOICE: str = 'Избранное'
+    SETTINGS: str = 'Настройки'
     SUPPLIERS_FAVOURITES: str = 'Избранные поставщики'
     SERVICES: str = 'Услуги'
     COOP_REQUESTS: str = 'Заявки на сотрудничество'

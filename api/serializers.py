@@ -64,9 +64,11 @@ class UserDetailSerializer(UserListSerializer):
 	regions = RegionSerializer(many=True, read_only=True, partial=True)
 	main_region = RegionSerializer(many=False, read_only=True, partial=True)
 	average_rating = serializers.SerializerMethodField()
-	designer_rating = serializers.SerializerMethodField()
-	rate_count = serializers.SerializerMethodField()
+	related_designer_rating = serializers.SerializerMethodField(read_only=True)
+	rating_voices_count = serializers.SerializerMethodField()
 	has_given_rating = serializers.BooleanField(read_only=True)
+	in_favourite = serializers.BooleanField(read_only=True)
+	favourites = serializers.SerializerMethodField(read_only=True)
 
 	class Meta:
 		model = User
@@ -74,7 +76,7 @@ class UserDetailSerializer(UserListSerializer):
 		exclude = ('token',)
 
 	def format_rating(self, rates: dict):
-		if rates is None:
+		if not rates:
 			return {}
 		formatted_rates = {'receiver_id': self.instance.id}
 		for field_name, rate in rates.items():
@@ -87,15 +89,15 @@ class UserDetailSerializer(UserListSerializer):
 		avg_rating = obj.calculate_average_rating()
 		return self.format_rating(avg_rating)
 
-	def get_designer_rating(self, obj):
-		designer = self.context.get('designer')
-		if designer:
-			designer_rating = obj.calculate_average_rating(designer)
-			return self.format_rating(designer_rating)
-		return {}
+	def get_related_designer_rating(self, obj):
+		rating = self.context.get('related_designer_rating')
+		return self.format_rating(rating)
 
-	def get_rate_count(self, obj):
-		return obj.get_rate_count()
+	def get_rating_voices_count(self, obj):
+		return obj.get_rating_voices_count()
+
+	def get_favourites(self, obj):
+		return self.context.get('favourites')
 
 	def to_internal_value(self, data):
 		validated_data = super().to_internal_value(data)
@@ -148,13 +150,19 @@ class FavouriteSerializer(serializers.ModelSerializer):
 		model = Favourite
 		fields = '__all__'
 
+	def to_representation(self, instance):
+		return {
+			'supplier_id': instance.supplier.id,
+			'supplier_name': str(instance.supplier),
+		}
+
 
 class RateSerializer(serializers.ModelSerializer):
-	avg_rating = serializers.SerializerMethodField(read_only=True)
+	# avg_rating = serializers.SerializerMethodField(read_only=True)
 
 	class Meta:
 		model = Rate
-		fields = ['avg_rating']
+		fields = '__all__'
 
 	def to_representation(self, instance):
 		return {

@@ -6,11 +6,12 @@ from telegram.ext import ContextTypes
 
 from bot.constants.common import TARIFF_LIST, PROFILE_FIELD_SET
 from bot.constants.menus import profile_menu, continue_menu, back_menu
-from bot.constants.patterns import TARIFF_PATTERN
-from bot.handlers.common import edit_last_message, get_state_menu, delete_messages_by_key
+from bot.constants.messages import send_unknown_question_message
+from bot.constants.patterns import TARIFF_PATTERN, FAVOURITE_PATTERN, SETTINGS_PATTERN
+from bot.handlers.common import edit_last_message, get_menu_item, delete_messages_by_key, build_menu_item
 from bot.handlers.details import user_details
 from bot.states.main import MenuState
-from bot.utils import generate_reply_keyboard, generate_inline_keyboard, update_inline_keyboard
+from bot.utils import generate_reply_keyboard, generate_inline_keyboard, update_inline_keyboard, match_message_text
 
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
@@ -26,13 +27,9 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optiona
 	title = f'{str(state)}\n*{user_data["details"]["username"].upper()}*'
 	edit_profile_markup = generate_inline_keyboard(["📝 Редактировать данные"], callback_data="edit_user_details")
 
-	chat_data["menu"].append({
-		"state": state,
-		"message": None,
-		"inline_message": None,
-		"markup": menu_markup,
-		"inline_markup": edit_profile_markup
-	})
+	menu_item = build_menu_item(state, None, None, menu_markup, edit_profile_markup)
+	chat_data["menu"].append(menu_item)
+
 	# Вывод сообщений с данными пользователя
 	message = await user_details(update, context, title=title, show_all=True)
 	chat_data["menu"][-1].update({
@@ -49,12 +46,12 @@ async def profile_options_choice(update: Update, context: ContextTypes.DEFAULT_T
 	chat_data = context.chat_data
 	message_text = update.message.text
 	tariff = TARIFF_LIST[access]
-	state, message, inline_message, menu_markup, _ = get_state_menu(context)
+	state, message, inline_message, menu_markup, _ = get_menu_item(context)
 
 	await delete_messages_by_key(context, "saved_details_message")
 	await delete_messages_by_key(context, "last_message_id")
 
-	if re.search(TARIFF_PATTERN, message_text, re.I):
+	if match_message_text(TARIFF_PATTERN, message_text):
 		state = MenuState.TARIFF_CHANGE
 		message = await update.message.reply_text(
 			f'Текущий тариф: *{tariff.upper()}*',
@@ -73,13 +70,27 @@ async def profile_options_choice(update: Update, context: ContextTypes.DEFAULT_T
 			reply_markup=edit_buttons
 		)
 
-	chat_data["menu"].append({
-		"state": state,
-		"message": message,
-		"inline_message": inline_message,
-		"markup": back_menu,
-		"inline_markup": None
-	})
+	elif match_message_text(FAVOURITE_PATTERN, message_text):
+		# [task 6]: реализовать отображение списка Избранное с кнопками для перехода к детальной информации пользователя
+		state = MenuState.FAVOURITE_CHOICE
+		message = await update.message.reply_text(
+			f'*{str(state).upper()}*',
+			reply_markup=back_menu
+		)
+
+	elif match_message_text(SETTINGS_PATTERN, message_text):
+		# реализовать личных настроек пользователя
+		state = MenuState.SETTINGS
+		message = await update.message.reply_text(
+			f'_в стадии реализации..._',
+			reply_markup=back_menu
+		)
+
+	else:
+		await send_unknown_question_message(update.message)
+
+	menu_item = build_menu_item(state, message, inline_message, menu_markup)
+	chat_data["menu"].append(menu_item)
 	chat_data["last_message_ids"] = [inline_message.message_id]
 
 	return state
@@ -120,7 +131,9 @@ async def edit_user_details_callback(update: Update, context: ContextTypes.DEFAU
 
 async def edit_details_fields_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 	""" Функция изменения полей данных пользователя """
-	# После изменения надо проверить поле groups и изменить user_data["group] = max(user_data["details"]["groups"])
+	# TODO: [task 5]:
+	#  Требуется реализация логики обновления данных по каждому полю
+	#  После изменения надо проверить поле groups и изменить user_data["group] = max(user_data["details"]["groups"])
 	query = update.callback_query
 
 	await query.answer()
@@ -130,10 +143,7 @@ async def edit_details_fields_callback(update: Update, context: ContextTypes.DEF
 
 	title = fields.get(field_name)
 	if title:
-		await query.message.reply_text(
-			f"🖊 {title}:",
-		)
-	# TODO: Требуется реализация логики обновления данных по каждому полю
+		await query.message.reply_text(f"🖊 {title}:")
 
 
 async def choose_tariff_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

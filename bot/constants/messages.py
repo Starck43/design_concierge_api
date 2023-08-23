@@ -326,13 +326,13 @@ async def offer_to_save_rating_message(message: Message) -> Message:
 
 async def offer_to_show_authors_for_user_rating_message(message: Message, user: dict) -> Message:
 	button = generate_inline_keyboard(
-		[f'Посмотреть участников ({user["rate_count"]})'],
+		[f'Список участников ({user["rating_voices_count"]})'],
 		callback_data=str(user["id"]),
 		prefix_callback_name="authors_for_user_rating_"
 	)
 
 	return await message.reply_text(
-		"Посмотреть всех кто выставил оценки:",
+		f'Посмотреть всех кто оценивал компанию\n' + user["name"],
 		reply_markup=button,
 	)
 
@@ -351,7 +351,7 @@ async def show_detail_rating_message(message: Message, text: str = "") -> Messag
 
 async def success_save_rating_message(message: Message, user_data: dict) -> None:
 	await message.edit_text(
-		f'*Рейтинг для {user_data["username"]} успешно обновлен!*\n'
+		#f'Рейтинг для *{user_data["receiver_name"]}* успешно обновлен!\n'
 		f'Спасибо за оценку ♥\n️'
 		f'*Ваш рейтинг:* ⭐_{user_data["author_rate"]}_\n️'
 		f'*Общий рейтинг:* ⭐_{user_data["total_rate"]}️_\n'
@@ -401,20 +401,20 @@ async def show_after_set_segment_message(message: Message, segment: int = None) 
 
 async def add_new_user_message(message: Message, category: dict) -> Message:
 	new_user_buttons = generate_inline_keyboard(
-		["Добавить компанию"],
+		["🆕 Добавить компанию"],
 		callback_data=str(category["group"]),
 		prefix_callback_name="add_new_user_",
 	)
+
 	return await message.reply_text(
-		text=f'_Вы можете предложить свою компанию в категории {category["name"].upper()}_',
+		f'Порекомендовать компанию в категории *{category["name"].upper()}*',
 		reply_markup=new_user_buttons
 	)
 
 
 async def empty_data_message(message: Message, text: str = None) -> Message:
 	return await message.reply_text(
-		text or "⚠️ Недостаточно данных для завершения действия!",
-		reply_markup=start_menu,
+		text or "⚠️ Упс. Ошибка чтения данных!",
 	)
 
 

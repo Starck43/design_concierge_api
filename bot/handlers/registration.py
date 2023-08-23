@@ -30,7 +30,7 @@ from bot.states.registration import RegState
 from bot.utils import (
 	find_obj_in_list, update_inline_keyboard, fuzzy_compare, extract_numbers, sub_years, extract_fields,
 	format_output_text, fetch_user_data, remove_item_from_list, format_phone_number, generate_reply_keyboard,
-	calculate_years_of_work
+	calculate_years_of_work, match_message_text
 )
 
 
@@ -83,13 +83,14 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 		await send_error_to_admin(update.message, context, text=error)
 		await create_registration_link(update.message, context)
 
-	if current_status == 'cancel_registration' or re.search(DONE_PATTERN, message_text, re.I):
+	if current_status == 'cancel_registration' or match_message_text(DONE_PATTERN, message_text):
 		log.info(f'User {user_details["username"]} (ID:{user_details["user_id"]}) interrupted registration.')
 
 		await interrupt_reg_message(update.message)
 
 	elif current_status == "approve_registration" and (
-			re.search(CONTINUE_PATTERN, message_text, re.I) or message_text == chat_data["verification_code"]
+			match_message_text(CONTINUE_PATTERN, message_text) or
+			message_text == chat_data["verification_code"]
 	):
 		# сохранение данных пользователя на сервер
 		token = user_data.get('token', None)
@@ -201,7 +202,7 @@ async def categories_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 	user_data = context.user_data
 	user_details = user_data["details"]
 
-	if re.search(CONTINUE_PATTERN, update.message.text, re.I):
+	if match_message_text(CONTINUE_PATTERN, update.message.text):
 		chat_data.pop("categories", None)
 
 		category_list = user_details.get("categories", {}).values()
@@ -235,7 +236,7 @@ async def work_experience_choice(update: Update, context: ContextTypes.DEFAULT_T
 
 	years = extract_numbers(update.message.text)[0]
 
-	if re.search(CONTINUE_PATTERN, update.message.text, re.I) or years:
+	if match_message_text(CONTINUE_PATTERN, update.message.text) or years:
 		user_details["work_experience"] = years
 
 		message = await show_main_region_message(update.message)
@@ -263,7 +264,7 @@ async def regions_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 	user_details.setdefault("regions", {})
 	await delete_messages_by_key(context, "warn_message_id")
 
-	if re.search(CONTINUE_PATTERN, update.message.text, re.I):
+	if match_message_text(CONTINUE_PATTERN, update.message.text):
 		if not user_details["regions"]:
 			message = await required_region_warn_message(update.message)
 			chat_data["warn_message_id"] = message.message_id
@@ -338,7 +339,7 @@ async def socials_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 	chat_data = context.chat_data
 	user_data = context.user_data
 	message_text = update.message.text
-	is_continue = re.search(CONTINUE_PATTERN, message_text, re.I)
+	is_continue = match_message_text(CONTINUE_PATTERN, message_text)
 
 	if is_continue or message_text.startswith("http"):
 		group = user_data["group"]
@@ -382,7 +383,7 @@ async def segment_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 		message = await not_validated_warn_message(query.message, text=text)
 		chat_data["warn_message_id"] = message.message_id
 
-	elif re.search(CONTINUE_PATTERN, message_text, re.I):
+	elif match_message_text(CONTINUE_PATTERN, message_text):
 		await offer_to_input_address_message(query.message)
 		chat_data["reg_state"] = RegState.SELECT_ADDRESS
 
@@ -392,7 +393,7 @@ async def segment_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def address_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	message_text = update.message.text
 
-	if not re.search(CONTINUE_PATTERN, message_text, re.I):
+	if not match_message_text(CONTINUE_PATTERN, message_text):
 		context.user_data["details"]["address"] = message_text
 
 	return await verify_reg_data_choice(update, context)

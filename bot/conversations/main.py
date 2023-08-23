@@ -12,13 +12,14 @@ from bot.constants.menus import main_menu, start_menu
 from bot.constants.messages import denied_access_message, share_files_message
 from bot.constants.patterns import (
 	DONE_PATTERN, PROFILE_PATTERN, BACK_PATTERN, SERVICES_PATTERN, COOPERATION_REQUESTS_PATTERN, START_PATTERN,
-	DESIGNER_PATTERN, USER_DETAILS_PATTERN, TARIFF_PATTERN, SUPPLIERS_SEARCH_PATTERN, ACTIVE_ORDERS_PATTERN
+	DESIGNER_PATTERN, USER_DETAILS_PATTERN, SUPPLIERS_SEARCH_PATTERN, ACTIVE_ORDERS_PATTERN,
+	USER_PROFILE_PATTERN
 )
 from bot.handlers.common import (
 	go_back, init_start_menu, user_authorization, load_rating_questions, load_user_field_names, set_priority_group,
 	invite_user_to_chat, is_user_chat_member
 )
-from bot.handlers.cooperation import cooperation_requests, fetch_supplier_requests
+from bot.handlers.cooperation import cooperation_requests, coop_request_message_callback
 from bot.handlers.designers import (
 	main_menu_choice, select_suppliers_in_cat_callback, select_user_details_callback, user_details_choice,
 	select_events_callback, select_sandbox_callback, place_designer_order_callback, select_supplier_segment_callback,
@@ -51,7 +52,7 @@ async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 	user = update.effective_user
 	user_data = context.user_data
-	context.bot_data.setdefault("rate_questions", await load_rating_questions(update.message, context))
+	context.bot_data.setdefault("rating_questions", await load_rating_questions(update.message, context))
 	context.bot_data.setdefault("user_field_names", await load_user_field_names(update.message, context))
 	user_has_rating = user_data["details"].get("has_given_rating")
 
@@ -163,8 +164,8 @@ cooperation_requests_handler = MessageHandler(
 	cooperation_requests
 )
 
-user_profile_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(TARIFF_PATTERN, re.I)),
+profile_options_choice_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(USER_PROFILE_PATTERN, re.I)),
 	profile_options_choice
 )
 
@@ -182,7 +183,7 @@ main_dialog = ConversationHandler(
 			done_handler,
 			main_menu_handler,
 			services_menu_handler,
-			cooperation_requests_handler,
+			# cooperation_requests_handler, # в стадии будущего обсуждения
 			profile_handler,
 		],
 		MenuState.SUPPLIERS_REGISTER: [
@@ -199,8 +200,8 @@ main_dialog = ConversationHandler(
 			CallbackQueryHandler(add_new_user_callback, pattern=r"^add_new_user_\d+$"),
 		],
 		MenuState.ORDERS: [
-			# [task 2]: Создать callback для отображения деталей заказа с кнопками управления заказом
-			# CallbackQueryHandler(order_details_callback, pattern=r"^order_\d+$"),
+			# TODO: [task 1]: Создать callback для отображения деталей заказа с кнопками управления заказом
+			#  CallbackQueryHandler(order_details_callback, pattern=r"^order_\d+$"),
 		],
 		MenuState.USER_DETAILS: [
 			user_details_handler,
@@ -218,7 +219,7 @@ main_dialog = ConversationHandler(
 			CallbackQueryHandler(edit_user_details_callback, pattern=r"^edit_user_details"),
 			CallbackQueryHandler(edit_details_fields_callback, pattern=r"^edit_field_"),
 			CallbackQueryHandler(select_supplier_segment_callback, pattern=r'^segment_\d+$'),
-			user_profile_handler
+			profile_options_choice_handler
 		],
 		MenuState.TARIFF_CHANGE: [
 			CallbackQueryHandler(choose_tariff_callback, pattern=r"^tariff_"),
@@ -227,7 +228,7 @@ main_dialog = ConversationHandler(
 			CallbackQueryHandler(fetch_supplier_services),
 		],
 		MenuState.COOP_REQUESTS: [
-			CallbackQueryHandler(fetch_supplier_requests),
+			CallbackQueryHandler(coop_request_message_callback),
 		],
 		MenuState.DONE: [
 			done_handler,

@@ -2,31 +2,33 @@ import requests
 from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, Count
+from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel
 from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError
-from rest_framework.generics import get_object_or_404, ListAPIView
+from rest_framework.generics import (
+	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, ListCreateAPIView, RetrieveAPIView
+)
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rate, Region, File, Order
+from api.models import Category, User, Rate, Region, File, Order, Favourite, Group
 from .serializers import (
 	CategorySerializer, UserListSerializer, RateSerializer, RegionSerializer, UserDetailSerializer,
-	FileUploadSerializer, OrderSerializer
+	FileUploadSerializer, OrderSerializer, FavouriteSerializer
 )
 
 
-class RegionList(generics.ListAPIView):
+class RegionList(ListAPIView):
 	queryset = Region.objects.all()
 	serializer_class = RegionSerializer
 
 
-class RegionDetail(generics.RetrieveAPIView):
+class RegionDetail(RetrieveAPIView):
 	queryset = Region.objects.all()
 	serializer_class = RegionSerializer
 
 
-class CategoryList(generics.ListAPIView):
+class CategoryList(ListAPIView):
 	queryset = Category.objects.all()
 	serializer_class = CategorySerializer
 
@@ -57,12 +59,12 @@ class CategoryList(generics.ListAPIView):
 		return queryset
 
 
-class CategoryDetail(generics.RetrieveAPIView):
+class CategoryDetail(RetrieveAPIView):
 	queryset = Category.objects.all()
 	serializer_class = CategorySerializer
 
 
-class UserList(generics.ListAPIView):
+class UserList(ListAPIView):
 	queryset = User.objects.all()
 	serializer_class = UserListSerializer
 
@@ -133,18 +135,34 @@ class UserDetail(APIView):
 
 	def get(self, request, pk=None):
 		user = self.get_user(pk)
-		related_designer_id = request.query_params.get('related_user')
+		related_user_id = request.query_params.get('related_user')
 		context = {}
 
 		if not isinstance(user, User):
 			return user
 
-		if related_designer_id:
+		if related_user_id:
 			try:
 				# получим по id дизайнера и привяжем к пользователю рейтинг дизайнера, если он есть
-				designer = User.objects.get(id=related_designer_id)
-				context = {'designer': designer}
+				designer = User.objects.get(id=related_user_id, categories__group=Group.DESIGNER.value)
+				rating = user.calculate_average_rating(author=designer)
+				context['related_designer_rating'] = rating
 			except User.DoesNotExist:
+				pass
+
+			try:
+				# проверим Избранное для дизайнера и поставщика
+				Favourite.objects.get(designer=related_user_id, supplier=user)
+				user.in_favourite = True
+			except Favourite.DoesNotExist:
+				user.in_favourite = False
+
+		else:
+			try:
+				# добавим Избранное для пользователя, если оно есть
+				supplier = Favourite.objects.filter(designer=user)
+				context['favourites'] = FavouriteSerializer(supplier, many=True).data
+			except Favourite.DoesNotExist:
 				pass
 
 		serializer = UserDetailSerializer(user, context=context)
@@ -223,21 +241,54 @@ class UpdateRatingView(APIView):
 			# Получим обновленный рейтинг и вернем его ответом
 			user_ratings.append({
 				"id": receiver_id,
-				"username": rating.receiver.username,
+				"receiver_name": str(rating.receiver),
 				"author_rate": rating.calculate_average_rate(),
 				"total_rate": rating.receiver.total_rate
 			})
-		return Response(data=user_ratings, status=status.HTTP_201_CREATED)
+		return Response(data=user_ratings, status=status.HTTP_200_OK)
+
+
+# Чтение Избранного для дизайнера
+class FavouriteListView(ListAPIView):
+	serializer_class = FavouriteSerializer
+
+	def get_queryset(self):
+		user_id = self.kwargs.get('user_id')
+		return Favourite.objects.select_related('designer').filter(designer__user_id=user_id)
+
+
+class UpdateFavouriteView(APIView):
+	def get_favourite(self, user_id, supplier_id):
+		return get_object_or_404(Favourite, designer__user_id=user_id, supplier__id=supplier_id)
+
+	def get(self, request, user_id, supplier_id):
+		favourite = self.get_favourite(user_id, supplier_id)
+		serializer = FavouriteSerializer(favourite)
+		return Response(serializer.data, status=status.HTTP_200_OK)
+
+	def post(self, request, user_id, supplier_id):
+		designer = get_object_or_404(User, user_id=user_id)
+		supplier = get_object_or_404(User, id=supplier_id)
+		favourite, created = Favourite.objects.get_or_create(designer=designer, supplier=supplier)
+		serializer = FavouriteSerializer(favourite)
+		status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+		return Response(serializer.data, status=status_code)
+
+	def delete(self, request, user_id, supplier_id):
+		favourite = self.get_favourite(user_id, supplier_id)
+		supplier_name = str(favourite)
+		favourite.delete()
+		return Response({"username": "sdsdsd"}, status=status.HTTP_204_NO_CONTENT)
 
 
 # Получение списка заказов и создание заказа
-class OrderListCreateView(generics.ListCreateAPIView):
+class OrderListView(ListCreateAPIView):
 	queryset = Order.objects.all()
 	serializer_class = OrderSerializer
 
 
 # Обновление и удаление заказа
-class OrderRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+class OrderView(RetrieveUpdateDestroyAPIView):
 	queryset = Order.objects.all()
 	serializer_class = OrderSerializer
 

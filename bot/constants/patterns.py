@@ -1,5 +1,5 @@
 from bot.constants.keyboards import (
-	PROFILE_KEYBOARD, DESIGNER_KEYBOARD, USER_DETAILS_KEYBOARD, )
+	PROFILE_KEYBOARD, DESIGNER_KEYBOARD, USER_DETAILS_KEYBOARD, DESIGNER_PROFILE_KEYBOARD, BACK_KEYBOARD, )
 from bot.utils import flatten_list
 
 
@@ -16,11 +16,18 @@ START_QUESTIONNAIRE_PATTERN = r'начать анкетирование|start qu
 REPEAT_QUESTIONNAIRE_PATTERN = r'повторить анкетирование|repeat questionnaire'
 REGISTRATION_PATTERN = r'(начать|повторить) регистрацию|регистрация|register$'
 PROFILE_PATTERN = r'профиль'
+EVENTS_PATTERN = r'мероприятия|события'
+SANDBOX_PATTERN = r'барахолк|песочниц'
 TARIFF_PATTERN = r'тариф'
-USER_RATE_PATTERN = r'рейтинг|оценка|оценить(.*поставщика)'
+FAVOURITE_PATTERN = r'избранное'
+SETTINGS_PATTERN = r'настройки'
+USER_RATE_PATTERN = 'рейтинг|оценка|оценить(.*поставщика)'
+ADD_FAVOURITE_PATTERN = 'добавить в избранное'
+REMOVE_FAVOURITE_PATTERN = '(убрать|удалить) из избранного'
 USER_FEEDBACK_PATTERN = r'отзыв'
 SUPPLIERS_SEARCH_PATTERN = r'поиск|отбор|подбор|найти|искать|подобрать|отобрать|отфильтровать'
 ACTIVE_ORDERS_PATTERN = r'все заказы|активные заказы'
+USER_DETAILS_PATTERN = r'' + USER_RATE_PATTERN + "|" + ADD_FAVOURITE_PATTERN + "|" + REMOVE_FAVOURITE_PATTERN
 
+USER_PROFILE_PATTERN = r'' + flatten_list(DESIGNER_PROFILE_KEYBOARD, exclude=BACK_KEYBOARD, delimiter="|")
 DESIGNER_PATTERN = r'' + flatten_list(DESIGNER_KEYBOARD[0:3], exclude=PROFILE_KEYBOARD, delimiter="|")
-USER_DETAILS_PATTERN = r'' + flatten_list(USER_DETAILS_KEYBOARD[0], delimiter="|")

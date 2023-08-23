@@ -1,9 +1,9 @@
 from django.urls import path
+
 from .views import (
 	RateQuestionsView, CategoryList, CategoryDetail, UserList, UserDetail, UpdateRatingView, RegionList, RegionDetail,
-	UserFieldNamesView, FileUploadView, OrderListCreateView, OrderRetrieveUpdateDestroyView, RatingListView
+	UserFieldNamesView, FileUploadView, OrderListView, OrderView, RatingListView, FavouriteListView, UpdateFavouriteView
 )
-
 
 urlpatterns = [
 	path('regions/', RegionList.as_view(), name='region-list'),
@@ -13,17 +13,19 @@ urlpatterns = [
 	path('users/', UserList.as_view(), name='user-list'),
 	path('users/<int:pk>/', UserDetail.as_view(), name='user-detail'),
 	path('users/create/', UserDetail.as_view(), name='user-create'),
-	path('users/<str:user_id>/update_ratings/', UpdateRatingView.as_view(), name='update-user-ratings'),
+	path('users/<str:user_id>/update_ratings/', UpdateRatingView.as_view(), name='user-ratings-update'),
+	path('users/<str:user_id>/favourites/', FavouriteListView.as_view(), name='user-favourite-list'),
+	path('users/<str:user_id>/favourites/<int:supplier_id>/', UpdateFavouriteView.as_view(), name='user-favourites-update'),
 	path('users/<str:user_id>/upload/', FileUploadView.as_view(), name='files-upload'),
 
-	path('orders/', OrderListCreateView.as_view(), name='order-list'),
-	path('orders/<int:pk>/', OrderRetrieveUpdateDestroyView.as_view(), name='order-detail'),
+	path('orders/', OrderListView.as_view(), name='order-list'),
+	path('orders/<int:pk>/', OrderView.as_view(), name='order-detail'),
 
 	path('rating/<int:receiver_id>/authors/', RatingListView.as_view(), name='rating-authors'),
 	path('rating/questions/', RateQuestionsView.as_view(), name='rate-questions'),
 
 	# path('regions/', RegionList.as_view(), name='region-list'),
-	path('user_field_names/', UserFieldNamesView.as_view(), name='user_field_names'),
+	path('user_field_names/', UserFieldNamesView.as_view(), name='user-field-names'),
 ]
 
 # примеры запросов:
@@ -45,14 +47,17 @@ urlpatterns = [
 # с добавлением поля has_given_rating в ответе, обозначающим, что у пользователя есть хотя бы один рейтинг
 # users/create/ (POST) - регистрация нового пользователя
 # users/<user_id>/update_ratings/ (POST, PATCH) - обновление или частичное обновление рейтинга от пользователя с user_id
+# users/<str:user_id>/favourites/ (GET) - получение списка избранного для дизайнера по его user_id
+# users/<str:user_id>/favourites/<int:supplier_id>/ (GET, POST, DELETE) - получение избранного, добавление и удаление
 # users/<id>/ (GET, PUT, PATCH) - получение, обновление или частичное обновление данных пользователя с id
 # users/<id>/?related_user={author_id}/ (GET) - получение пользователя с добавлением данных рейтинга от author_id
 # users/<user_id>/upload/ (POST) - отправка url файлов на сервер для пользователя с user_id
 
+
 # orders/ (GET, POST) - получение списка заказов и создание нового заказа пользователя
 # orders/<id>/ (GET, PUT, PATCH, DELETE) - получение заказа, обновление и удаление заказа пользователя с id
 
-# rating/<int:receiver_id>/authors/ (GET) - получение списка авторов, которые выставили оценки пользователю с receiver_id
+# rating/<int:receiver_id>/authors/ (GET) - получение списка авторов, которые выставили оценки пользователю с id
 # rating/questions/ (GET) - получение списка вопросов для рейтинга
 
 # user_field_names/ (GET) - получение имен полей данных пользователя

@@ -210,7 +210,7 @@ class User(models.Model):
 		)
 		return rates
 
-	def get_rate_count(self):
+	def get_rating_voices_count(self):
 		return self.received_rate.count()
 
 	def get_token(self):
@@ -262,25 +262,6 @@ class Supplier(User):
 	objects = UserManager(Group.SUPPLIER)
 
 
-class Favourite(models.Model):
-	designer = models.ForeignKey(
-		User, verbose_name='Дизайнер/архитектор', on_delete=models.CASCADE, related_name='favourites'
-	)
-	supplier = models.ForeignKey(
-		User,
-		verbose_name='Избранный поставщик',
-		on_delete=models.CASCADE,
-		limit_choices_to=~Q(categories__group=Group.DESIGNER.value)
-	)
-
-	class Meta:
-		verbose_name = 'Избранное'
-		verbose_name_plural = 'Избранные поставщики'
-
-	def __str__(self):
-		return f'{self.supplier}'
-
-
 class Rate(models.Model):
 	author = models.ForeignKey(
 		User,
@@ -326,6 +307,26 @@ class Rate(models.Model):
 	def save(self, *args, **kwargs):
 		super().save(*args, **kwargs)
 		self.receiver.update_total_rate()
+
+
+class Favourite(models.Model):
+	designer = models.ForeignKey(
+		User, verbose_name='Дизайнер/архитектор', on_delete=models.CASCADE, related_name='favourites'
+	)
+	supplier = models.ForeignKey(
+		User,
+		verbose_name='Избранный поставщик',
+		on_delete=models.CASCADE,
+		limit_choices_to=~Q(categories__group=Group.DESIGNER.value)
+	)
+
+	class Meta:
+		verbose_name = 'Избранное'
+		verbose_name_plural = 'Избранные поставщики'
+		unique_together = ['designer', 'supplier']
+
+	def __str__(self):
+		return f'{self.supplier}'
 
 
 class Feedback(models.Model):
