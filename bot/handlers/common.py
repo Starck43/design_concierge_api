@@ -1,7 +1,7 @@
 from typing import Union, List, Dict, Optional, ValuesView, Tuple, Any
 
-from telegram import Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery, Bot, helpers, ChatMember
-from telegram.constants import ParseMode, ChatMemberStatus
+from telegram import Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery, Bot, helpers
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
@@ -9,7 +9,7 @@ from bot.bot_settings import ADMIN_CHAT_ID
 from bot.constants.keyboards import BACK_KEYBOARD
 from bot.constants.menus import main_menu, done_menu, back_menu
 from bot.constants.messages import (
-	offer_for_registration_message, share_link_message, yourself_rate_warning_message, empty_data_message
+	offer_for_registration_message, share_link_message, yourself_rate_warning_message
 )
 from bot.logger import log
 from bot.states.group import Group
@@ -42,7 +42,7 @@ async def user_authorization(update: Update, context: ContextTypes.DEFAULT_TYPE)
 		return True
 
 
-async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int = -2) -> Optional[Message]:
+async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int = -2) -> str:
 	""" Переход вверх по меню """
 	query = update.callback_query
 	if query:
@@ -52,7 +52,7 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 
 	await query.message.delete()
 
-	current_menu = get_state_menu(context)
+	current_menu = get_menu_item(context)
 	current_message = current_menu[1]
 	current_inline_message = current_menu[2]
 	await delete_messages_by_key(context, current_message)
@@ -60,7 +60,7 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 
 	# если нажата кнопка Назад, то вернем предыдущее состояние меню, иначе переходим в начальное состояние
 	index = level if match_message_text(BACK_KEYBOARD[0], query.message.text) else 0
-	prev_menu = extract_state_menu(context, index)
+	prev_menu = extract_menu_item(context, index)
 
 	if not prev_menu:
 		init_menu = await init_start_menu(context)
@@ -116,43 +116,35 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 
 		else:
 			try:
-				await saved_message.reply_text(
+				saved_message = await saved_message.reply_text(
 					saved_message.text,
 					reply_markup=saved_message.reply_markup
 				)
+				context.chat_data["last_message_id"] = saved_message.message_id
 			except TelegramError:
 				pass
-			del context.chat_data["saved_message"]
+			context.chat_data.pop("saved_message")
 
 	return state
 
 
-async def init_start_menu(
-		context: ContextTypes.DEFAULT_TYPE,
-		menu_markup: Optional[ReplyKeyboardMarkup] = main_menu,
-		text: str = None,
-) -> Dict[str, Optional[Message]]:
-	chat_data = context.chat_data
-
-	reply_message = await context.bot.send_message(
-		chat_id=chat_data["chat_id"],
-		text=text or '*Выберите интересующий раздел:*',
-		reply_markup=menu_markup,
-		parse_mode=ParseMode.MARKDOWN_V2
-	)
-
-	chat_data["menu"]: List[Dict[str, Optional[Message]]] = [{
-		"state": MenuState.START,
-		"message": reply_message,
-		"inline_message": None,
-		"markup": menu_markup,
-		"inline_markup": None,
-	}]
-
-	return chat_data["menu"][0]
+def build_menu_item(
+		state: str,
+		message: Message = None,
+		inline_message: Message = None,
+		markup: ReplyKeyboardMarkup = None,
+		inline_markup: InlineKeyboardMarkup = None
+) -> dict:
+	return {
+		"state": state,
+		"message": message,
+		"inline_message": inline_message,
+		"markup": markup,
+		"inline_markup": inline_markup
+	}
 
 
-def get_state_menu(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Tuple[Any, ...]:
+def get_menu_item(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Tuple[Any, ...]:
 	try:
 		chat_data = context.chat_data
 		menu = chat_data.get("menu", [])
@@ -162,7 +154,7 @@ def get_state_menu(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Tuple
 		return None, None, None, None, None
 
 
-def extract_state_menu(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Optional[ValuesView]:
+def extract_menu_item(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Optional[ValuesView]:
 	chat_data = context.chat_data
 	menu = chat_data.get("menu", None)
 
@@ -183,6 +175,26 @@ def extract_state_menu(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> O
 
 	except ValueError:
 		return None
+
+
+async def init_start_menu(
+		context: ContextTypes.DEFAULT_TYPE,
+		menu_markup: Optional[ReplyKeyboardMarkup] = main_menu,
+		text: str = None,
+) -> dict:
+	chat_data = context.chat_data
+
+	message = await context.bot.send_message(
+		chat_id=chat_data["chat_id"],
+		text=text or '*Выберите интересующий раздел:*',
+		reply_markup=menu_markup,
+		parse_mode=ParseMode.MARKDOWN_V2
+	)
+
+	menu_item = build_menu_item(MenuState.START, message, None, menu_markup, None)
+	chat_data["menu"]: List[dict] = [menu_item]
+
+	return chat_data["menu"][0]
 
 
 async def edit_last_message(
@@ -243,7 +255,7 @@ async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, message: Un
 				await context.bot.delete_message(chat_id=chat_id, message_id=value)
 
 		if isinstance(message_id, list):
-			for value in message_id:
+			for value in reversed(message_id):
 				await context.bot.delete_message(chat_id=chat_id, message_id=value)
 
 	except TelegramError:
@@ -288,20 +300,41 @@ def get_user_rating_data(context: ContextTypes.DEFAULT_TYPE, user: dict) -> Tupl
 	""" Возвращаем вопросы для анкетирования, подробный рейтинг в виде объекта и в виде строки """
 	rating = user.get("average_rating", {})
 	group = max(user.get("groups"))
-	rating_questions = context.bot_data["rate_questions"][group - 1] if group else {}
+	rating_questions = context.bot_data["rating_questions"][group - 1] if group else {}
 
 	return rating_questions, rating
 
 
-async def update_ratings(
-		message: Message,
-		context: ContextTypes.DEFAULT_TYPE,
-		user_id: str,
-		data: any
-) -> Optional[List[dict]]:
-	await delete_messages_by_key(context, "last_message_ids")
+async def update_user_data(message: Message, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> Optional[dict]:
+	chat_data = context.chat_data
+	user_details = context.user_data["details"]
 
-	res = await fetch_user_data(user_id, "/update_ratings", data=data, method="POST")
+	# получаем и обновляем сохраненные данные поставщиков в контексте
+	res = await fetch_user_data(user_id, params={"related_user": user_details["id"]})
+	supplier_data = res["data"]
+	if supplier_data:
+		chat_data["selected_user"] = supplier_data
+		chat_data["suppliers"].update({user_id: supplier_data})
+
+		# удалим всех поставщиков из сохраненных в cat_users
+		cat_users = chat_data.get("cat_users", {})
+		cat_ids = extract_fields(supplier_data["categories"], "id")
+		[cat_users[cat_id].clear() for cat_id in cat_ids if cat_id in cat_users]
+
+		# обновим сохраненное состояние со списком поставщиков через inline_markup в menu
+		selected_cat = chat_data.get("selected_cat", {})
+		updated_reply_markup = await load_cat_users(message, context, selected_cat.get("id"))
+		if updated_reply_markup:
+			prev_menu = chat_data["menu"][-2]
+			prev_menu["inline_markup"] = updated_reply_markup
+
+	return supplier_data
+
+
+async def update_ratings(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Optional[List[dict]]:
+	user_id = context.user_data["details"]["user_id"]
+
+	res = await fetch_user_data(user_id, "/update_ratings", data=context.chat_data["user_ratings"], method="POST")
 	if res["status_code"] == 304:
 		await yourself_rate_warning_message(message)
 
@@ -314,12 +347,10 @@ async def update_ratings(
 
 async def check_required_user_group_rating(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Optional[bool]:
 	chat_data = context.chat_data
-	selected_user = chat_data.get('selected_user')
-	rating_questions = context.bot_data.get('rating_questions')
+	selected_user = chat_data.get("selected_user")
+	rating_questions = context.bot_data.get("rating_questions")
 
 	if not selected_user or not rating_questions:
-		chat_data["error"] = "selected_user пустой или нет загруженных rating_questions."
-		await empty_data_message(message)
 		return None
 
 	rates, _ = find_obj_in_list(chat_data["user_ratings"], {"receiver_id": selected_user["id"]})
