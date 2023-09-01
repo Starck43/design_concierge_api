@@ -14,10 +14,11 @@ from bot.constants.messages import (
 	select_events_message, send_unknown_question_message, choose_sandbox_message,
 	show_after_set_segment_message, success_save_rating_message, offer_to_save_rating_message,
 	show_detail_rating_message, yourself_rate_warning_message, show_categories_message,
-	show_designer_active_orders_message, add_new_user_message, empty_data_message
+	show_designer_active_orders_message, add_new_user_message, empty_data_message, show_designer_order_message
 )
-from bot.constants.patterns import USER_RATE_PATTERN, ADD_FAVOURITE_PATTERN, REMOVE_FAVOURITE_PATTERN, EVENTS_PATTERN, \
-	SANDBOX_PATTERN
+from bot.constants.patterns import (
+	USER_RATE_PATTERN, ADD_FAVOURITE_PATTERN, REMOVE_FAVOURITE_PATTERN
+)
 from bot.handlers.common import (
 	go_back, get_menu_item, delete_messages_by_key, update_ratings, check_required_user_group_rating, load_cat_users,
 	load_categories, load_user, get_user_rating_data, load_orders, is_outsourcer, update_user_data, build_menu_item
@@ -40,9 +41,9 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 	message_text = update.message.text.lower()
 
 	# Раздел - РЕЕСТР ПОСТАВЩИКОВ
-	if group in [
+	if match_message_text(str(MenuState.SUPPLIERS_REGISTER), message_text) and group in [
 		Group.DESIGNER, Group.SUPPLIER
-	] and match_message_text(str(MenuState.SUPPLIERS_REGISTER), message_text):
+	]:
 		state = MenuState.SUPPLIERS_REGISTER
 		if group == Group.DESIGNER:
 			menu_markup = generate_reply_keyboard(SUPPLIERS_REGISTER_KEYBOARD, is_persistent=True)
@@ -65,21 +66,29 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 		inline_message = await show_categories_message(update.message, chat_data["supplier_categories"])
 
 	# Раздел - БИРЖА УСЛУГ
-	elif group in [
+	elif match_message_text(str(MenuState.OUTSOURCER_SERVICES), message_text) and group in [
 		Group.DESIGNER, Group.OUTSOURCER
-	] and match_message_text(str(MenuState.OUTSOURCER_SERVICES), message_text):
+	]:
 		state = MenuState.OUTSOURCER_SERVICES
 
-		if group == Group.DESIGNER:
+		# если пользователь только в группе Аутсорсер
+		if group == Group.OUTSOURCER:
+			menu_markup = back_menu
+			# TODO: [task 1]: создать логику показа текущих заказов дизайнеров
+			orders = await load_orders(update.message, context)
+			message, inline_message = await show_designer_active_orders_message(update.message, orders)
+
+		# если пользователь в группе Дизайнер или Дизайнер и Аутсорсер
+		else:
 			keyboard = DESIGNER_SERVICES_KEYBOARD
-			if is_outsourcer(context):
+			if is_outsourcer(context):  # Дизайнер и Аутсорсер
+				keyboard = DESIGNER_AND_OUTSOURCER_SERVICES_KEYBOARD
 				# TODO: [task 1]:
 				#  создать логику отображения списка заказов дизайнеров через нажатие на кнопку "Все заказы"
-				keyboard = DESIGNER_AND_OUTSOURCER_SERVICES_KEYBOARD
 
 			menu_markup = generate_reply_keyboard(keyboard, is_persistent=True)
 			title = str(state).upper()
-
+			subtitle = "Выберите категорию:"
 			message = await update.message.reply_text(
 				f'__{title}__',
 				reply_markup=menu_markup,
@@ -92,19 +101,12 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 					return await go_back(update, context, -1)
 
 			# выведем список категорий аутсорсеров
-			inline_message = await show_categories_message(update.message, chat_data["outsourcer_categories"])
-
-		else:
-			menu_markup = back_menu
-			# если пользователь только в группе Аутсорсер
-			# TODO: [task 1]: создать логику показа заказов дизайнеров
-			orders = await load_orders(update.message, context)
-			message, inline_message = await show_designer_active_orders_message(update.message, orders)
+			inline_message = await show_categories_message(update.message, chat_data["outsourcer_categories"], subtitle)
 
 	# Раздел - СОБЫТИЯ
-	elif group in [
+	elif match_message_text(str(MenuState.DESIGNER_EVENTS), message_text) and group in [
 		Group.DESIGNER, Group.OUTSOURCER
-	] and match_message_text(EVENTS_PATTERN, message_text):
+	]:
 		state = MenuState.DESIGNER_EVENTS
 		title = str(state).upper()
 		menu_markup = back_menu
@@ -115,9 +117,9 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 		inline_message = await select_events_message(update.message)
 
 	# Раздел - БАРАХОЛКА (купить/продать/поболтать)
-	elif group in [
+	elif match_message_text(str(MenuState.DESIGNER_SANDBOX), message_text) and group in [
 		Group.DESIGNER, Group.OUTSOURCER
-	] and match_message_text(SANDBOX_PATTERN, message_text):
+	]:
 		state = MenuState.DESIGNER_SANDBOX
 		title = str(state).upper()
 		message = await update.message.reply_text(
@@ -138,7 +140,7 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def designer_active_orders_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
-	# Функция отображения списка всех активных заказов для группы 0 и 1
+	""" Функция отображения списка всех активных заказов для Group.DESIGNER (группы 0 и 1) """
 	chat_data = context.chat_data
 
 	_, _, inline_message, _, _ = get_menu_item(context)
@@ -269,11 +271,8 @@ async def user_details_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 @send_action(ChatAction.TYPING)
-async def select_users_in_category(
-		update: Update,
-		context: ContextTypes.DEFAULT_TYPE,
-		is_supplier_register: bool
-) -> str:
+async def select_users_in_category(update: Update, context: ContextTypes.DEFAULT_TYPE, is_supplier_register: bool) -> str:
+	""" Функция вывода списка поставщиков в категории """
 	query = update.callback_query
 
 	await query.answer()
@@ -288,15 +287,6 @@ async def select_users_in_category(
 	if button_list is None:
 		return await go_back(update, context, -1)
 
-	if group == Group.DESIGNER:
-		if is_supplier_register:
-			keyboard = SUPPLIERS_REGISTER_KEYBOARD
-		else:
-			keyboard = DESIGNER_AND_OUTSOURCER_SERVICES_KEYBOARD if is_outsourcer(
-				context) else DESIGNER_SERVICES_KEYBOARD
-
-		menu_markup = generate_reply_keyboard(keyboard, is_persistent=True)
-
 	selected_cat, _ = find_obj_in_list(
 		chat_data["supplier_categories" if is_supplier_register else "outsourcer_categories"],
 		{"id": int(cat_id)}
@@ -305,17 +295,29 @@ async def select_users_in_category(
 	chat_data["selected_cat"] = selected_cat
 	category_name = selected_cat["name"].upper()
 	title = f'➡️ Категория *{category_name}*'
-	subtitle = "Список поставщиков:" if is_supplier_register else "Список поставщиков услуг:"
+	subtitle = "Поставщики:" if is_supplier_register else "Поставщики услуг:"
 
 	await query.message.delete()
 	message = await query.message.reply_text(
 		text=title,
 		reply_markup=menu_markup,
 	)
+
 	inline_message = await query.message.reply_text(
 		text=subtitle,
 		reply_markup=button_list
 	)
+
+	if group == Group.DESIGNER:
+		if is_supplier_register:
+			keyboard = SUPPLIERS_REGISTER_KEYBOARD
+		else:
+			keyboard = DESIGNER_AND_OUTSOURCER_SERVICES_KEYBOARD if is_outsourcer(
+				context) else DESIGNER_SERVICES_KEYBOARD
+
+		menu_markup = generate_reply_keyboard(keyboard, is_persistent=True)
+		message = await show_designer_order_message(query.message, category_name)
+		chat_data["last_message_id"] = message.message_id
 
 	menu_item = build_menu_item(state, message, inline_message, menu_markup)
 	chat_data["menu"].append(menu_item)
@@ -570,7 +572,8 @@ async def select_sandbox_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def place_designer_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	# Разместить заказ на бирже
+	""" Колбэк размещения заказа на бирже """
+
 	query = update.callback_query
 
 	await query.answer()
@@ -581,6 +584,7 @@ async def place_designer_order_callback(update: Update, context: ContextTypes.DE
 	menu_markup = generate_reply_keyboard(DESIGNER_SERVICES_KEYBOARD, is_persistent=True)
 
 	if order_id:
+		# TODO: [task 1]: Создать callback для отображения деталей заказа с кнопками управления заказом
 		message = await query.message.reply_text(
 			f'Необходимо выбрать параметры для размещения...',
 			reply_markup=menu_markup,
