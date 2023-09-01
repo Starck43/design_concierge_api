@@ -124,7 +124,7 @@ async def introduce_reg_message(message: Message) -> Message:
 async def show_categories_message(
 		message: Message,
 		category_list: List,
-		text: str = None,
+		title: str = None,
 		message_id: Optional[int] = None
 ) -> Optional[Message]:
 
@@ -137,15 +137,15 @@ async def show_categories_message(
 			vertical=True
 		)
 		return await message.reply_text(
-			text or 'Список категорий:',
+			title or 'Список категорий:',
 			reply_markup=reply_markup,
 		)
 	else:
 		categories = data_list_to_string(category_list, field_names="name", separator="\n☑️ ")
 
 		await message.get_bot().edit_message_text(
-			text or f'*Выбранные категории:*'
-			        f'\n☑️ {categories}',
+			title or f'*Выбранные категории:*'
+			         f'\n☑️ {categories}',
 			chat_id=message.chat_id,
 			message_id=message_id,
 		)
@@ -464,7 +464,7 @@ async def send_unknown_question_message(message: Message, text: str = None) -> M
 
 async def show_designer_order_message(message: Message, category: str = None) -> Message:
 	button = generate_inline_keyboard(
-		["Разместить заказ"],
+		["Новый заказ"],
 		callback_data="place_order"
 	)
 	return await message.reply_text(

@@ -28,7 +28,7 @@ DESIGNER_KEYBOARD = [
 ]
 
 DESIGNER_SERVICES_KEYBOARD = [
-	["Новый заказ", "Мои заказы"],
+	["Мои заказы"],
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
 
