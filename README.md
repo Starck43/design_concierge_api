@@ -11,25 +11,23 @@
     включая его статус, состояние диалога, сообщений, клавиатуры, геопозиция и др.
 
 - `menu`
-массив сохраненных состояний интерфейса (например, клавиатура или сохраненное сообщение)
+массив сохраненных состояний интерфейса (_menu состояние, reply сообщение, inline сообщения, reply клавиатура, inline клавиатура_)
 ```json lines
 [{
     "state": <MenuState>, // type Enum
     "message": <reply_message>, // type Message
-    "inline_message": <inline_message>, // type Message
+    "inline_message": <inline_message>, // type Message or list of Message
     "markup": <reply_markup>, // type ReplyKeyboardMarkup
     "inline_markup": <inline_markup> // InlineKeyboardMarkup
 }]
 ```
 ```python
-# Для удобства создана функция, которая возвращает переданные параметры в виде объекта 
+# Для удобства создана функция, которая добавляет в chat_data["menu"] новый объект в конец списка
 # Пример сохранения нового состояния меню:
-from bot.handlers.common import build_menu_item
+from bot.handlers.common import add_menu_item
+from bot.states.main import MenuState
 state = MenuState.SUPPLIERS_REGISTER
-menu_markup = back_menu
-
-menu_item = build_menu_item(state, None, None, menu_markup)
-chat_data["menu"].append(menu_item)
+add_menu_item(context, state=state, markup=back_menu)
 ```
 
 - `cats`
@@ -67,6 +65,10 @@ chat_data["menu"].append(menu_item)
 
 - `last_message_ids`
     Список ID сохраненных сообщений, которые требуется удалить при возврате на верхний уровень меню
+
+
+- `local_data`
+    Временная переменная для хранения промежуточных данных на текущем уровне меню, которая удаляется при возврате назад
 
 ### bot_data:
     Контекст общедоступных данных для всех пользователей бота
@@ -113,7 +115,7 @@ chat_data["menu"].append(menu_item)
 ```
 
 ## Для разработчиков
-- [ссылка на TODO для реализации](docs/todo.md)
+- [ссылка на TODO для реализации](docs/TODO.md)
 
 
 ## Additional
