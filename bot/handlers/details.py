@@ -9,14 +9,14 @@ from bot.constants.messages import (
 	offer_to_set_segment_message, show_detail_rating_message, offer_to_show_authors_for_user_rating_message,
 	show_rating_authors_list_message
 )
-from bot.handlers.common import get_menu_item, get_user_rating_data, load_rating_authors
+from bot.handlers.common import get_menu_item, get_user_rating_data, load_rating_authors, rates_to_string
 from bot.utils import (
-	extract_fields, rates_to_string, format_output_text, format_output_link, detect_social, generate_map_url,
+	extract_fields, format_output_text, format_output_link, detect_social, generate_map_url,
 	calculate_years_of_work
 )
 
 
-async def user_details(
+async def show_user_details(
 		query: Union[CallbackQuery, Update],
 		context: ContextTypes.DEFAULT_TYPE,
 		title: str = None,
@@ -80,11 +80,11 @@ async def user_details(
 
 	message = await show_detail_rating_message(query.message, rating_text)
 	chat_data["saved_rating_message"] = message
-	chat_data["last_message_ids"].uppend(message.message_id)
+	chat_data["last_message_ids"].append(message.message_id)
 
 	if selected_user["rating_voices_count"] > 0:
 		message = await offer_to_show_authors_for_user_rating_message(query.message, user=selected_user)
-		chat_data["last_message_ids"].uppend(message.message_id)
+		chat_data["last_message_ids"].append(message.message_id)
 
 	return reply_message
 

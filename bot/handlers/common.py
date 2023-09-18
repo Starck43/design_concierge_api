@@ -78,42 +78,22 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 				text=reply_message.text_markdown,
 				reply_markup=markup
 			)
-		else:
-			reply_message = None
+			update_menu_item(context, message=reply_message)
 
 		if inline_message:
-			if isinstance(current_inline_message, Message) and isinstance(inline_message,
-			                                                              Message) and not reply_message:
-				inline_message = await context.bot.edit_message_text(
-					text=inline_message.text_markdown,
-					chat_id=query.message.chat_id,
-					message_id=current_inline_message.message_id,
-					reply_markup=inline_markup or inline_message.reply_markup
-					# сохраненные кнопки или кнопки из сообщения
+			inline_messages = []
+			if not isinstance(inline_message, list):
+				inline_message = [inline_message]
+
+			for message in inline_messages:
+				markup = inline_markup if inline_markup and len(inline_message) == 1 else message.reply_markup
+				message = await query.message.reply_text(
+					text=message.text_markdown,
+					reply_markup=markup
 				)
+				inline_messages.append(message)
 
-			else:
-				inline_messages = [inline_message] if not isinstance(inline_message, list) else inline_message
-				inline_message = []
-				for message in inline_messages:
-					message = await query.message.reply_text(
-						text=message.text_markdown,
-						reply_markup=inline_markup or message.reply_markup
-					)
-					inline_message.append(message)
-
-		# last_message_id = context.chat_data.get("last_message_id")
-		# # если последнее сохраненное сообщение было заменено на новое выше, то не удаляем его
-		# if last_message_id and last_message_id != inline_message.message_id:
-		# 	await delete_messages_by_key(context, "last_message_id")
-
-		else:
-			inline_message = None
-
-		context.chat_data["menu"][-1].update({
-			"message": reply_message,
-			"inline_message": inline_message
-		})
+			update_menu_item(context, inline_messages=inline_messages)
 
 	await delete_messages_by_key(context, "last_message_id")
 	await delete_messages_by_key(context, context.chat_data.get("last_message_ids"))

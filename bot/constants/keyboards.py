@@ -8,6 +8,7 @@ CANCEL_KEYBOARD = ["🚫 Отменить"]
 SEND_CONFIRMATION_KEYBOARD = [['📦 Отправить', '🚫 Отменить'], ]
 CONTINUE_KEYBOARD = [["➡️ Продолжить", "🚫 Отменить"], ]
 PAYMENT_KEYBOARD = [["💳 Оплатить", "🚫 Отменить"], ]
+SUPPORT_KEYBOARD = ["Написать в поддержку"]
 
 START_QUESTIONNAIRE_KEYBOARD = ["🚀 Начать анкетирование"]
 REPEAT_QUESTIONNAIRE_KEYBOARD = ["Повторить анкетирование"]
@@ -19,6 +20,9 @@ SUBMIT_REG_KEYBOARD = ["✅ Подтвердить данные"]
 SEGMENT_KEYBOARD = ["Премиум/Средний+", "Средний", "Средний-/Эконом"]
 PROFILE_KEYBOARD = ["Мой профиль 👤"]
 FAVORITE_KEYBOARD = ["Добавить в избранное", "Убрать из избранного"]
+ORDER_EXECUTOR_KEYBOARD = ["🪪 Посмотреть", "✅ Выбрать", "❎ Отказаться"]
+ORDER_ACTIONS_KEYBOARD = ["▶️ Активировать", "⏸ Приостановить", "⏹ Завершить заказ"]
+ORDER_RESPOND_KEYBOARD = ["✅️ Откликнуться", "❎ Отозвать отклик"]
 
 DESIGNER_KEYBOARD = [
 	["Реестр поставщиков 👥", "Биржа услуг 🛠"],
@@ -28,12 +32,23 @@ DESIGNER_KEYBOARD = [
 ]
 
 DESIGNER_SERVICES_KEYBOARD = [
-	["Мои заказы"],
+	["Мои заказы", "Другие заказы"],
+	BACK_KEYBOARD + TO_TOP_KEYBOARD,
+]
+
+DESIGNER_SERVICES_ORDERS_KEYBOARD = [
+	["Архивные заказы"],
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
 
 DESIGNER_AND_OUTSOURCER_SERVICES_KEYBOARD = [
-	["Новый заказ", "Мои заказы", "Все заказы"],
+	["Мои заказы", "Все заказы"],
+	["Взятые заказы", "Выполненные заказы"],
+	BACK_KEYBOARD + TO_TOP_KEYBOARD,
+]
+
+DESIGNER_SERVICES_ORDER_KEYBOARD = [
+	["Изменить", "Удалить"],
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
 
@@ -68,7 +83,7 @@ OUTSOURCER_KEYBOARD = [
 ]
 
 OUTSOURCER_SERVICES_KEYBOARD = [
-	["Заказы в работе"],
+	["Взятые заказы", "Выполненные заказы"],
 	BACK_KEYBOARD + TO_TOP_KEYBOARD,
 ]
 
@@ -86,5 +101,6 @@ SUPPLIER_PROFILE_KEYBOARD = [
 ]
 
 UNCATEGORIZED_KEYBOARD = [
+	SUPPORT_KEYBOARD,
 	DONE_KEYBOARD
 ]

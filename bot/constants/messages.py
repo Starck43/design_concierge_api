@@ -1,15 +1,19 @@
-from typing import List, Optional, Union, Dict, Tuple
+from typing import List, Optional, Union
 
-from telegram import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, \
-	Document, PhotoSize
+from telegram import (
+	Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Document, PhotoSize
+)
 from telegram.ext import ContextTypes
 
+from bot.constants.common import ORDER_RELATED_USERS_TITLE
 from bot.constants.keyboards import (
 	CONFIRM_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SUBMIT_REG_KEYBOARD, CANCEL_REG_KEYBOARD, START_REG_KEYBOARD,
-	SEGMENT_KEYBOARD, REG_GROUP_KEYBOARD, REPEAT_KEYBOARD
+	SEGMENT_KEYBOARD, REG_GROUP_KEYBOARD, REPEAT_KEYBOARD, ORDER_EXECUTOR_KEYBOARD
 )
 from bot.constants.menus import continue_reg_menu, cancel_reg_menu, start_menu, back_menu, done_menu
-from bot.utils import generate_inline_keyboard, generate_reply_keyboard, data_list_to_string, format_output_text
+from bot.utils import (
+	generate_inline_keyboard, generate_reply_keyboard, data_list_to_string, format_output_text, find_obj_in_list
+)
 
 
 async def offer_for_registration_message(message: Message, text: str = None) -> Message:
@@ -127,18 +131,17 @@ async def show_categories_message(
 		title: str = None,
 		message_id: Optional[int] = None
 ) -> Optional[Message]:
-
 	if message_id is None:
-		reply_markup = generate_inline_keyboard(
+		buttons = generate_inline_keyboard(
 			category_list,
 			item_key="name",
 			callback_data="id",
-			prefix_callback_name="category_",
+			callback_data_prefix="category_",
 			vertical=True
 		)
 		return await message.reply_text(
 			title or 'Список категорий:',
-			reply_markup=reply_markup,
+			reply_markup=buttons,
 		)
 	else:
 		categories = data_list_to_string(category_list, field_names="name", separator="\n☑️ ")
@@ -216,7 +219,7 @@ async def update_top_regions_message(context: ContextTypes.DEFAULT_TYPE) -> None
 		top_regions_list,
 		item_key="name",
 		callback_data="id",
-		prefix_callback_name="region_"
+		callback_data_prefix="region_"
 	)
 
 	if "last_message_id" not in chat_data:
@@ -239,7 +242,7 @@ async def confirm_region_message(message: Message, text: str = None) -> Message:
 	buttons = generate_inline_keyboard(
 		[CONFIRM_KEYBOARD],
 		callback_data=["yes", "no"],
-		prefix_callback_name="choose_region_"
+		callback_data_prefix="choose_region_"
 	)
 	return await message.reply_text(
 		f'{text}, все верно?',
@@ -294,7 +297,7 @@ async def incorrect_socials_warn_message(message: Message) -> None:
 async def offer_to_select_segment_message(message: Message) -> Message:
 	buttons = generate_inline_keyboard(
 		SEGMENT_KEYBOARD,
-		prefix_callback_name="segment_",
+		callback_data_prefix="segment_",
 		vertical=True
 	)
 
@@ -328,7 +331,7 @@ async def offer_to_show_authors_for_user_rating_message(message: Message, user: 
 	button = generate_inline_keyboard(
 		[f'Список участников ({user["rating_voices_count"]})'],
 		callback_data=str(user["id"]),
-		prefix_callback_name="authors_for_user_rating_"
+		callback_data_prefix="authors_for_user_rating_"
 	)
 
 	return await message.reply_text(
@@ -351,7 +354,7 @@ async def show_detail_rating_message(message: Message, text: str = "") -> Messag
 
 async def success_save_rating_message(message: Message, user_data: dict) -> None:
 	await message.edit_text(
-		#f'Рейтинг для *{user_data["receiver_name"]}* успешно обновлен!\n'
+		# f'Рейтинг для *{user_data["receiver_name"]}* успешно обновлен!\n'
 		f'Спасибо за оценку ♥\n️'
 		f'*Ваш рейтинг:* ⭐_{user_data["author_rate"]}_\n️'
 		f'*Общий рейтинг:* ⭐_{user_data["total_rate"]}️_\n'
@@ -368,7 +371,7 @@ async def offer_to_cancel_action_message(message: Message, text: str = None) -> 
 	buttons = generate_inline_keyboard(
 		[CONFIRM_KEYBOARD],
 		callback_data=["yes", "no"],
-		# prefix_callback_name="cancel_"
+		# callback_data_prefix="cancel_"
 	)
 	return await message.reply_text(
 		text or '*⚠️ Все введенные данные будут утеряны!*\n'
@@ -380,7 +383,7 @@ async def offer_to_cancel_action_message(message: Message, text: str = None) -> 
 async def offer_to_set_segment_message(message: Message, text: str = None) -> Message:
 	buttons = generate_inline_keyboard(
 		SEGMENT_KEYBOARD,
-		prefix_callback_name="segment_",
+		callback_data_prefix="segment_",
 		vertical=True
 	)
 
@@ -403,7 +406,7 @@ async def add_new_user_message(message: Message, category: dict) -> Message:
 	new_user_buttons = generate_inline_keyboard(
 		["🆕 Добавить компанию"],
 		callback_data=str(category["group"]),
-		prefix_callback_name="add_new_user_",
+		callback_data_prefix="add_new_user_",
 	)
 
 	return await message.reply_text(
@@ -457,57 +460,92 @@ async def check_file_size_message(message: Message, file: Union[Document, PhotoS
 async def send_unknown_question_message(message: Message, text: str = None) -> Message:
 	return await message.reply_text(
 		text or f'Не вполне понял Вас.\n'
-		        f'Выберите нужный раздел или уточните свой вопрос.',
+		        f'Выберите нужный раздел или переформулируйте свой вопрос.',
 		reply_markup=message.reply_markup or back_menu,
 	)
 
 
-async def show_designer_order_message(message: Message, category: str = None) -> Message:
-	button = generate_inline_keyboard(
-		["Новый заказ"],
-		callback_data="place_order"
-	)
+async def place_new_order_message(message: Message, category: str = None, text: str = None) -> Message:
+	""" Инлайн сообщение с размещением нового заказа """
+	button = generate_inline_keyboard(["Новый заказ"], callback_data="place_order")
+	title = f'Разместить новый заказ'
+	if category:
+		title += f' в категории {category.upper()}'
+
 	return await message.reply_text(
-		f'Разместите новый заказ в категории {category.upper()}',
+		f'_{text or title}_',
 		reply_markup=button,
 	)
 
 
-async def show_designer_active_orders_message(message: Message, orders: list) -> Tuple[Message, Union[Message, None]]:
-	if not orders:
-		message = await message.reply_text(
-			f'На данный момент нет новых заказов.',
-			reply_markup=back_menu
+async def show_inline_message(
+		message: Message,
+		text: str,
+		inline_messages: Optional[List[Message]],
+		inline_markup: Optional[InlineKeyboardMarkup] = None,
+) -> Union[Message]:
+	""" Вывод inline сообщения с добавлением его в список inline_messages """
+
+	inline_message = await message.reply_text(text, reply_markup=inline_markup)
+
+	if not isinstance(inline_messages, list):
+		inline_messages = [inline_messages]
+	inline_messages.append(inline_message)
+
+	return inline_message
+
+
+async def show_order_related_users_message(
+		message: Message,
+		order: dict,
+		inline_messages: Optional[List[Message]]
+) -> None:
+	""" Вывод данных претендентов на активный заказ или исполнителя с inline кнопками управления """
+
+	if not order["responding_users"]:
+		return None
+
+	users = order["responding_users"]
+	executor_id = order["executor"]
+	selected_postfix = ""
+
+	# если есть id исполнителя, то найдем его данные в списке всех претендентов
+	if executor_id:
+		executor, _ = find_obj_in_list(users, {"id": executor_id})
+		if executor:
+			users = [executor]
+			selected_postfix = "__selected"  # подтверждаем, что исполнитель найден среди претендентов
+
+	await show_inline_message(
+		message,
+		f'_{ORDER_RELATED_USERS_TITLE[1] if selected_postfix else ORDER_RELATED_USERS_TITLE[0]}:_',
+		inline_messages=inline_messages
+	)
+
+	for user in users:
+		buttons = [InlineKeyboardButton(ORDER_EXECUTOR_KEYBOARD[0], callback_data=f'user_{user["id"]}')]
+		if order["status"] == 1:
+			buttons.append(InlineKeyboardButton(
+				ORDER_EXECUTOR_KEYBOARD[2 if selected_postfix else 1],
+				callback_data=f'order_{order["id"]}__executor_{user["id"]}{selected_postfix}'
+			))
+
+		await show_inline_message(
+			message,
+			f'*{user["name"]}*'
+			f'{format_output_text("рейтинг", "⭐️" + str(user["total_rate"]) if user["total_rate"] else "не установлен")}',
+			inline_markup=InlineKeyboardMarkup([buttons]),
+			inline_messages=inline_messages
 		)
-		return message, None
-
-	message = await message.reply_text(
-		f'*Список активных заказов на услуги.*\n'
-		f'_Выбирайте интересующий заказ и нажимайте Откликнуться_',
-		reply_markup=back_menu
-	)
-
-	order_buttons = generate_inline_keyboard(
-		orders,
-		item_key="title",
-		callback_data="id",
-		prefix_callback_name="order_"
-	)
-
-	inline_message =  await message.reply_text(
-		f'Список заказов:',
-		reply_markup=order_buttons
-	)
-
-	return message, inline_message
 
 
 async def select_events_message(message: Message, text: str = None) -> Message:
 	buttons = generate_inline_keyboard(
 		["Местные", "Российские", "Международные"],
-		prefix_callback_name="event_type_",
+		callback_data_prefix="event_type_",
 		vertical=True
 	)
+
 	return await message.reply_text(
 		text or f'Какие мероприятия интересуют?',
 		reply_markup=buttons,
@@ -517,7 +555,7 @@ async def select_events_message(message: Message, text: str = None) -> Message:
 async def choose_sandbox_message(message: Message, text: str = None) -> Message:
 	buttons = generate_inline_keyboard(
 		DESIGNER_SANDBOX_KEYBOARD,
-		prefix_callback_name="sandbox_type_",
+		callback_data_prefix="sandbox_type_",
 		vertical=False
 	)
 	return await message.reply_text(
@@ -572,4 +610,3 @@ async def success_questionnaire_message(message: Message) -> None:
 		     f'Спасибо за уделенное время',
 		reply_markup=start_menu
 	)
-
