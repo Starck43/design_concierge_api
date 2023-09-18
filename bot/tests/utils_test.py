@@ -1,5 +1,5 @@
 import unittest
-from bot.utils import extract_fields, data_list_to_string, rates_to_string
+from bot.utils import extract_fields, data_list_to_string
 
 
 class TestListForField(unittest.TestCase):

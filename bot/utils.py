@@ -1,6 +1,8 @@
 import difflib
+import json
 import re
 from datetime import datetime, timedelta
+from enum import Enum
 from functools import wraps
 from typing import Optional, Dict, Union, List, Any, Tuple, Pattern
 from urllib.parse import urlencode
@@ -30,8 +32,9 @@ def command_handler(app, command, handler_filters=filters.COMMAND):
 def send_action(action):
 	"""
 	Запускает "action" во время обработки команды.
-	Example:
-		@send_action(ChatAction.TYPING)
+
+	Example usage:
+		@send_action(ChatAction.TYPING) \n
 		def my_handler(update, context):
 			pass
 	"""
@@ -77,11 +80,12 @@ def allowed_roles(roles: Union[ChatMember, List[str]] = None, channel_id=None):
 
 
 def build_menu(
-		buttons: List, n_cols: int,
-		header_buttons: Optional[bool] = None,
-		footer_buttons: Optional[bool] = None
+		buttons: list,
+		cols: int,
+		header_buttons: Optional[list] = None,
+		footer_buttons: Optional[list] = None
 ):
-	menu = [buttons[i:i + n_cols] for i in range(0, len(buttons), n_cols)]
+	menu = [buttons[i:i + cols] for i in range(0, len(buttons), cols)]
 	if header_buttons:
 		menu.insert(0, [header_buttons])
 	if footer_buttons:
@@ -100,19 +104,22 @@ def generate_reply_keyboard(
 ) -> Optional[ReplyKeyboardMarkup]:
 	"""
 	Generates a reply keyboard markup for Telegram bot API.
+
 	Args:
-		:param data: The data to be displayed on the keyboard. Can be a list of strings,
+		data: The data to be displayed on the keyboard. Can be a list of strings,
 		a list of lists of strings, or a list of dictionaries.
-		:param resize_keyboard: Whether the keyboard should be resized to fit the number of buttons.
-		:param one_time_keyboard: Whether the keyboard should be hidden after use.
-		:param is_persistent: Whether the keyboard should be always shown when the regular keyboard is hidden.
-		:param share_location: Share current location
-		:param share_contact: Share user contact information
+		resize_keyboard: Whether the keyboard should be resized to fit the number of buttons.
+		one_time_keyboard: Whether the keyboard should be hidden after use.
+		is_persistent: Whether the keyboard should be always shown when the regular keyboard is hidden.
+		share_location: Share current location
+		share_contact: Share user contact information
 		**kwargs: Additional keyword arguments to be passed to the KeyboardButton constructor.
+
 	Returns:
 		An instance of ReplyKeyboardMarkup containing the generated keyboard buttons.
 		Returns None if the data is empty or invalid.
 	"""
+
 	if not data:
 		return None
 	buttons = []
@@ -136,91 +143,102 @@ def generate_reply_keyboard(
 
 # TODO: Обработать исключение для callback_data = [], когда его длина не совпадает с общим количеством строк в data
 def generate_inline_keyboard(
-		data: Union[List[str], List[List[str]], List[Dict[str, Any]], None],
+		data: Union[List[str], List[List[str]], List[Dict[str, Any]], str],
 		item_key: Optional[str] = None,
 		item_prefix: Optional[Union[str, List[str]]] = "",
 		callback_data: Optional[Union[str, List[str], List[List[str]]]] = None,
-		prefix_callback_name: Optional[str] = None,
+		callback_data_prefix: Optional[str] = "",
+		second_button_label: Optional[str] = "",
 		vertical: bool = False,
 		**kwargs,
 ) -> Optional[InlineKeyboardMarkup]:
 	"""
 	Generates an inline keyboard markup for Telegram bot API.
+
 	Args:
 		data: The data to be displayed on the keyboard. Can be a list of strings,
 		a list of lists of strings, or a list of dictionaries.
 		callback_data: The callback data to be sent when a button is pressed. Can be a string,
 		a list of strings, or a list of lists of strings.
 		item_key: The key in the dictionary to be used as the button label.
+		item_prefix: A string or list of strings to be added as a prefix to the button label.
+		callback_data_prefix: The string to be added as a prefix to the callback data string.
+		second_button_label: The text to be displayed in the second column.
 		vertical: Whether the buttons should be displayed vertically or horizontally.
-		prefix_callback_name: The string to be added as a prefix to the callback data string.
-		item_prefix: A string or list of strings to be added as a suffix to the button label.
 		**kwargs: Additional keyword arguments to be passed to the InlineKeyboardButton constructor.
+
 	Returns:
 		An instance of InlineKeyboardMarkup containing the generated keyboard buttons.
 		Returns None if the data is empty or invalid.
 	"""
+
 	if not data:
 		return None
 
-	if not callback_data:
-		callback_data = [str(i) for i in range(len(data))]
-	elif isinstance(callback_data, str):
-		callback_data = [callback_data] * len(data)
-	elif isinstance(callback_data, list) and isinstance(callback_data[0], list):
-		callback_data = [item for sublist in callback_data for item in sublist]
+	if isinstance(data, str):
+		data = [data]
+
+	if isinstance(callback_data, str):
+		callback_data = [callback_data] * len(flatten_list(data) if isinstance(data[0], list) else data)
+	elif isinstance(callback_data, list):
+		callback_data = flatten_list(callback_data)
+	else:
+		callback_data = [str(i) for i in range(len(flatten_list(data)))]
+
 	buttons = []
 
 	for i, row in enumerate(data):
+		callback_data_str = callback_data_prefix
 
 		if isinstance(row, str):
-			row = [InlineKeyboardButton(
-				row,
-				callback_data=(prefix_callback_name + str(callback_data.pop(0)))
-				if prefix_callback_name else str(callback_data.pop(0)) if callback_data else str(i),
-				**kwargs
-			)]
+			text = item_prefix + row
+			callback_data_str += str(callback_data.pop(0)) if callback_data else slugify(row, separator="_")
+			row = [InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs)]
 
 		elif isinstance(row, dict):
 			key = row.get(callback_data[i], slugify(row.get(item_key, callback_data[i]), separator="_"))
-			item = row.get(item_key, key)
+			text = row.get(item_key, key)
 
 			if item_prefix:
 				if isinstance(item_prefix, list):
-					item_postfix = "".join(
-						[str(row.get(post_key, post_key)) for post_key in item_prefix]
-					)
+					prefix = "".join([str(row.get(post_key, post_key)) for post_key in item_prefix])
 				else:
-					item_postfix = str(row.get(item_prefix, item_prefix if item_prefix else ""))
+					prefix = str(row.get(item_prefix, item_prefix if item_prefix else ""))
 
-				if "None" not in item_postfix:
-					item = f"{item} {item_postfix}"
+				if "None" not in prefix:
+					text = f"{text} {prefix}"
 
-			callback_data_str = str(key)
-			if prefix_callback_name:
-				callback_data_str = prefix_callback_name + callback_data_str
-			row = [InlineKeyboardButton(item, callback_data=callback_data_str, **kwargs)]
+			callback_data_str += str(key)
+			row = [InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs)]
 
 		elif isinstance(row, list):
-			item_postfix = "".join(item_prefix) if isinstance(item_prefix, list) else item_prefix
-			left_part = ""
-			right_part = ""
-			if item_postfix:
-				if item_postfix[-1] == " ":
-					left_part = item_postfix
+			prefix = "".join(item_prefix) if isinstance(item_prefix, list) else item_prefix
+			left_part, right_part = "", ""
+			if prefix:
+				if prefix[-1] == " ":
+					left_part = prefix
 				else:
-					right_part = item_postfix
+					right_part = prefix
 
-			row = [
+			_row = []
+			for item in row:
+				callback_data_str = callback_data_prefix
+				callback_data_str += str(callback_data.pop(0)) if callback_data else slugify(item, separator="_")
+				text = left_part + item + right_part
+				_row.append(InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs))
+			row = _row
+
+		else:
+			row = None
+
+		if row and second_button_label:
+			row.append(
 				InlineKeyboardButton(
-					text=left_part + item + right_part,
-					callback_data=(prefix_callback_name + str(callback_data.pop(0)))
-					if prefix_callback_name else str(callback_data.pop(0))
-					if callback_data else slugify(item, separator="_"),
+					text=second_button_label,
+					callback_data=f"extra__{callback_data_str}",
 					**kwargs,
 				)
-				for item in row
-			]
+			)
 		buttons.append(row)
 
 	if vertical:
@@ -236,6 +254,8 @@ def update_inline_keyboard(
 		active_value: str,
 		button_type: str = "radiobutton",
 ) -> InlineKeyboardMarkup:
+	""" Update an inline keyboard, checking an active button in button list. Button types: radiobutton, checkbox, rate """
+
 	new_inline_keyboard = []
 
 	for row in inline_keyboard:
@@ -286,6 +306,7 @@ def sub_years(years: int = 0) -> int:
 	:param years: The number of years to subtract.
 	:return: The resulting date in "YYYY" format or empty string.
 	"""
+
 	today = datetime.today()
 	result = today - timedelta(days=years * 365)
 	return int(result.strftime("%Y"))
@@ -294,10 +315,12 @@ def sub_years(years: int = 0) -> int:
 def calculate_years_of_work(start_year: int, absolute_value: bool = False) -> Optional[str]:
 	"""
 	Calculate the number of years of work based on the start year.
+
 	:param start_year: The year the work started.
 	:param absolute_value: The flag to determine if the start year is the years of the work
 	:return: A string indicating the number of years of work.
 	"""
+
 	if not start_year:
 		return None
 
@@ -321,6 +344,17 @@ def replace_double_slashes(url: str):
 	return re.sub(r'(?<!:)//+', '/', url)
 
 
+def get_formatted_date(date: str, format_pattern: str = "%d.%m.%Y") -> tuple:
+	current_date = datetime.now()
+
+	if not date:
+		return "бессрочно", None, current_date
+
+	date_object = datetime.fromisoformat(date)
+	date_string = date_object.strftime(format_pattern) if current_date <= date_object else ""
+	return date_string, date_object, current_date
+
+
 def is_emoji(character: str) -> bool:
 	return unicodedata.category(character) == "So"
 
@@ -328,9 +362,11 @@ def is_emoji(character: str) -> bool:
 def extract_numbers(string: str) -> List[any]:
 	"""
 	Extracts all numbers from a given string.
+
 	:param string: The input string.
 	:return: A list of numbers extracted from the string.
 	"""
+
 	res_list = re.findall(r'\d+', string)
 	if not res_list:
 		res_list = [""]
@@ -347,6 +383,7 @@ def convert_obj_to_tuple_list(obj_list: dict, *keys) -> List[Optional[Tuple]]:
 def extract_fields(data: List[dict], field_names: Union[str, List[str]]) -> List[any]:
 	"""
 		Extracts values from a list of dictionaries corresponding to the given field names.
+
 		:param data: A list of dictionaries to extract values from.
 		:param field_names: A string or list of strings representing the field names to extract values for.
 		:return: A list of values corresponding to the given field names.
@@ -354,6 +391,7 @@ def extract_fields(data: List[dict], field_names: Union[str, List[str]]) -> List
 			If multiple ones are given, a list of lists is returned, where each inner list corresponds to
 			the values for a single dictionary.
 	"""
+
 	if not data:
 		return []
 
@@ -441,43 +479,18 @@ def format_output_link(caption: str = '', link_text: str = '', src: str = '', li
 	return format_output_text(caption, url, default_sep=" ")
 
 
-def rates_to_string(rates: dict, questions: dict, rate_value: int = 8) -> str:
-	if not rates or not questions:
-		return ""
-
-	result = ""
-	for key, val in rates.items():
-		if val is None:
-			continue
-
-		name = questions.get(key)
-		if not name:
-			continue
-
-		rate = min(round(val), rate_value)
-		level = rate / rate_value
-
-		if level > 0.7:
-			symbol = "🟩"
-		elif level >= 0.5:
-			symbol = "🟨"
-		else:
-			symbol = "🟧️"
-
-		empty_rate = "⬜" * (rate_value - rate)
-		result += f"{name} ({rate}/{rate_value}):\n{symbol * rate}{empty_rate}\n"
-
-	return result
-
-
 def find_obj_in_dict(list_dict: list, params: Dict[str, Any], condition: str = "AND"):
 	"""
 	Finds an object within a list of dictionaries based on specified keys and values, using the specified condition.
-	:param list_dict: A list of dictionaries to search within.
-	:param params: A dictionary containing keys and values to search for.
-	:param condition: The condition to use for matching. Possible values are "AND" (default) or "OR".
-	:return: The first dictionary that matches the specified keys and values using the specified condition, or None if no match is found.
+	Args:
+		list_dict: A list of dictionaries to search within.
+		params: A dictionary containing keys and values to search for.
+		condition: The condition to use for matching. Possible values are "AND" (default) or "OR".
+
+	Returns:
+		The first dictionary that matches the specified keys and values using the specified condition, or None if no match is found.
 	"""
+
 	for elem in list_dict:
 		if isinstance(elem, dict):  # Check if elem is a dictionary
 			if condition == "AND":
@@ -512,13 +525,14 @@ def remove_duplicates(data: List[dict], field: str) -> None:
 	"""
 	Removes dictionary duplicates in a list based on the specified field.
 
-	Arguments:
-	- data: A list of dictionaries to remove duplicates from.
-	- field: The field to use for removing duplicates.
+	Args:
+		data: A list of dictionaries to remove duplicates from.
+		field: The field to use for removing duplicates.
 
 	Returns:
-	None (the function mutates the input list).
+		None (the function mutates the input list).
 	"""
+
 	unique_values = set()  # Set of unique field values
 
 	for item in data:
@@ -534,13 +548,51 @@ def get_key_values(arr: list, key: str) -> List[str]:
 	return [obj.get(str(key)) for obj in arr]
 
 
-def replace_or_add_string(text, keyword, replacement):
+def update_text_by_keyword(text: str, keyword: str, replacement: str) -> str:
 	lines = text.split("\n")
 	for i in range(len(lines)):
 		if keyword in lines[i]:
 			lines[i] = replacement
 	new_text = "\n".join(lines)
 	return new_text
+
+
+def dict_to_formatted_text(data: dict, indent: int = 2) -> str:
+	"""
+	Converts a dictionary to json formatted text.
+	:param data: The dictionary to be converted.
+	:param indent: The number of spaces for indentation (default is 2).
+	:return: The formatted text representation of the dictionary.
+	"""
+
+	def parse_value(val):
+		"""
+		Parses the value based on its type.
+		:param val: The value to be parsed.
+		:return: The parsed value.
+		"""
+		if isinstance(val, dict):
+			return json.dumps(val, ensure_ascii=False, indent=indent)
+
+		elif isinstance(val, list) and val and isinstance(val[0], dict):
+			parsed_list = []
+			for item in val:
+				parsed_list.append(json.dumps(item, skipkeys=True, ensure_ascii=False, indent=indent))
+
+			return "[\n" + ",\n".join(parsed_list) + "\n]"
+
+		elif isinstance(val, Enum):
+			return f'{val.value} ({val.__class__.__name__}.{val.name})'
+
+		else:
+			return str(val)
+
+	formatted_text = []
+	for key, value in data.items():
+		formatted_value = parse_value(value)
+		formatted_text.append(f'{key}: {formatted_value}')
+
+	return '\n'.join(formatted_text)
 
 
 def determine_greeting(hour: int) -> str:
@@ -576,35 +628,41 @@ def match_message_text(pattern: Union[str, Pattern[str]], message_text: str) -> 
 def flatten_list(
 		lst: List[Union[str, List[str]]],
 		exclude: Optional[Union[str, List[str]]] = None,
-		delimiter: str = ''
-) -> str:
+		delimiter: str = ""
+) -> Union[List[str], str]:
 	"""
-	Given a list of strings and lists of strings, returns a flattened string with the specified delimiter.
+	Given a list or lists of strings, returns a flattened string with the specified delimiter.
 	Args:
-		lst (List[Union[str, List[str]]]): A list of strings and lists of strings to flatten.
-		exclude (Optional[Union[str, List[str]]]): A string or list of strings to exclude from the flattened string.
-			Defaults to None.
-		delimiter (str): The delimiter to use between flattened strings. Defaults to ''.
+		lst: A list of strings and lists of strings to flatten.
+		exclude: A string or list of strings to exclude from the flattened string. Defaults to None.
+		delimiter: The delimiter to use between flattened strings. If it's empty then result as list. Defaults to ''.
 	Returns:
-		str: The flattened string without special characters.
+		Union[List[str], str]: The flattened string without special characters.
 	"""
 	if not lst:
-		return ''
+		return ""
+
 	if not exclude:
 		exclude = []
+
 	if isinstance(exclude, str):
 		exclude = [exclude]
 
-	stack = lst.copy()
 	flattened = []
+	stack = lst[::-1]
+
 	while stack:
 		item = stack.pop()
+
 		if isinstance(item, list):
 			stack.extend(item[::-1])
 		elif item not in exclude:
 			flattened.append(remove_special_chars(item))
 
-	return delimiter.join(flattened)
+	if delimiter:
+		return delimiter.join(flattened)
+
+	return flattened
 
 
 def filter_list(
@@ -617,15 +675,18 @@ def filter_list(
 	"""
 	Filter a list of dictionaries by a specified key and value, and then sort the resulting list based on a specified key and direction.
 	Sort a list of any other type of object while preserving unique values.
+
 	Args:
 		list_: The list to filter and sort.
 		filter_key: The key to filter by for dictionaries.
 		filter_value: The value or values to filter by for dictionaries.
 		sort_key: The key to sort by for dictionaries and other types of objects.
 		reverse: Whether to sort in reverse order.
+
 	Returns:
 		A new filtered and sorted list.
 	"""
+
 	if isinstance(list_[0], dict) and filter_key is not None:
 		if not isinstance(filter_value, list):
 			filter_value = [filter_value]
@@ -647,25 +708,23 @@ def fuzzy_compare(
 	"""
 	Find the closest match to a source string in a list of strings or dictionaries using the difflib library.
 
-	Arguments:
-		src -- The source string or dictionary to compare against.
-		data -- The data to compare to (either a string, a list of strings, or a list of dictionaries).
-		item_key -- The key to use when comparing a list of dictionaries (optional).
-		cutoff -- The minimum similarity ratio required for a match (default 0.5).
+	Args:
+		src: The source string or dictionary to compare against.
+		data: The data to compare to (either a string, a list of strings, or a list of dictionaries).
+		item_key: The key to use when comparing a list of dictionaries (optional).
+		cutoff: The minimum similarity ratio required for a match (default 0.5).
 
 	Returns:
 		A tuple containing the closest match object, the similarity ratio, and the index of the match (if applicable).
 
 	Example usage:
-		>>> data = ['banana', 'apple', 'cherry']
-		>>> fuzzy_compare('aple', data)
-		('apple', 0.8, 1)
+		data = ['banana', 'apple', 'cherry'] \n
+		fuzzy_compare('aple', data)  # return: ('apple', 0.8, 1)
 	"""
 
 	def get_best_match(element):
 		# Find the closest match for the current element using recursive approach
-		match, match_ratio, match_index = fuzzy_compare(element, data, item_key, cutoff)
-		return match, match_ratio, match_index
+		return fuzzy_compare(element, data, item_key, cutoff)
 
 	if not src:
 		return "", 0, None
@@ -677,8 +736,8 @@ def fuzzy_compare(
 	if isinstance(src, list):
 		# If the source is a list, find the closest match for each element and select the one with the highest match ratio
 		best_match = ('', 0, None)
-		for element in src:
-			match, match_ratio, match_index = get_best_match(element)
+		for el in src:
+			match, match_ratio, match_index = get_best_match(el)
 			if match_ratio > best_match[1]:
 				best_match = match, match_ratio, match_index
 		return best_match
@@ -825,10 +884,10 @@ async def fetch(url, headers=None, params=None, data=None, method='GET', timeout
 async def fetch_user_data(
 		user_id: Union[str, int] = "",
 		endpoint: str = "",
-		params=None,
+		params: dict = None,
 		method: str = "GET",
-		headers: Optional[Dict] = None,
-		data: Optional[Dict] = None
+		headers: dict = None,
+		data: dict = None
 ):
 	url = SERVER_URL or "http://localhost:8000"
 	api_url = replace_double_slashes("{}/api/users/{}/{}/".format(url, str(user_id), endpoint))
@@ -845,18 +904,15 @@ async def fetch_user_data(
 	return {
 		"data": data,
 		"status_code": status_code,
+		"error": None,
 		"token": headers.get("token", None),
 	}
 
 
-async def fetch_data(
-		endpoint: str,
-		params=None,
-		method: str = "GET",
-):
+async def fetch_data(endpoint: str, params: dict = None, data: dict = None, method: str = "GET"):
 	url = SERVER_URL or "http://localhost:8000"
 	api_url = replace_double_slashes(f"{url}/api/{endpoint}/")
-	response = await fetch(api_url, params=params, method=method)
+	response = await fetch(api_url, params=params, data=data, method=method)
 	data, status_code, error, _ = response
 	if params is not None:
 		api_url += "?" + urlencode(params, doseq=True)
@@ -871,7 +927,8 @@ async def fetch_data(
 
 	return {
 		'data': data,
-		"status_code": status_code
+		"status_code": status_code,
+		'error': None
 	}
 
 
