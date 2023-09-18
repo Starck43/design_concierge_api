@@ -67,7 +67,9 @@ async def end_questionnaire(update: Union[Update, CallbackQuery], context: Conte
 	else:
 		log.info(f"User {user.full_name} (ID:{user.id}) finished questionnaire.")
 
-		if context.user_data.get("group"):
+		# продолжим диалог, если пользователь зарегистрировался или начал уже беседу
+		# 'priority_group' сохраняется в этих двух состояниях и удобно используется для проверки
+		if context.user_data.get("priority_group"):
 			chat_data["status"] = "dialog"
 
 	chat_data.pop("user_ratings", None)
@@ -206,7 +208,7 @@ async def show_user_rating_messages(
 			)
 
 		saved_message = await message.reply_text(text=subtitle, reply_markup=rate_markup)
-		chat_data["last_message_ids"].uppend(saved_message.message_id)
+		chat_data["last_message_ids"].append(saved_message.message_id)
 
 	return saved_message
 

@@ -5,7 +5,6 @@ from bot.bot_settings import CHANNEL_ID
 from bot.constants.common import HELP_CONTEXT
 from bot.constants.menus import main_menu, done_menu
 from bot.handlers.common import is_user_chat_member
-from bot.utils import generate_reply_keyboard
 
 
 async def helper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -14,8 +13,8 @@ async def helper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 	user_id = update.effective_user.id
 	user_data = context.user_data
 	if "details" in user_data:
-		user_group = user_data["group"]
-		menu_markup = main_menu.get(user_group, None)
+		priority_group = user_data["priority_group"].value
+		menu_markup = main_menu.get(priority_group, None)
 	else:
 		menu_markup = done_menu
 

@@ -113,7 +113,7 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 			log.info(f'User {user_details["username"]} (ID:{user_details["user_id"]}) has been registered.')
 			chat_data["status"] = "registered"
 
-			if user_data["group"] == Group.DESIGNER and not user_details.get("socials_url"):
+			if user_data["priority_group"] == Group.DESIGNER and not user_details.get("socials_url"):
 				user = update.from_user
 				log.info(f"Access restricted for user {user.full_name} (ID:{user.id}).")
 
@@ -129,7 +129,7 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 			await invite_user_to_chat(update, user_details["user_id"], chat_id=CHANNEL_ID)
 
 		else:
-			await catch_server_error(update.message, context, error_data=res)
+			await catch_server_error(update.message, context, error=res)
 
 	else:
 		await update.message.reply_text(
@@ -276,7 +276,7 @@ async def regions_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 			chat_data.pop("all_regions", None)
 			chat_data.pop("new_region", None)
 
-			if user_data["group"] == Group.DESIGNER:
+			if user_data["priority_group"] == Group.DESIGNER:
 				await offer_to_input_socials_message(update.message)
 			else:
 				await offer_to_input_socials_message(
@@ -342,14 +342,13 @@ async def socials_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 	is_continue = match_message_text(CONTINUE_PATTERN, message_text)
 
 	if is_continue or message_text.startswith("http"):
-		group = user_data["group"]
 		if not is_continue:
 			user_data["details"]["socials_url"] = message_text
 
-		elif group == Group.DESIGNER:
+		elif user_data["priority_group"] == Group.DESIGNER:
 			user_data["details"]["access"] = -1
 
-		if group == Group.SUPPLIER:
+		if user_data["priority_group"] == Group.SUPPLIER:
 			message = await offer_to_select_segment_message(update.message)
 			chat_data["last_message_id"] = message.message_id
 			chat_data["reg_state"] = RegState.SELECT_SEGMENT

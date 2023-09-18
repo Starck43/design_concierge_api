@@ -47,7 +47,8 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
 		return ConversationHandler.END
 
 	if status_code != 404:
-		await catch_server_error(update.message, context, error_data=res)
+		text = "Ошибка чтения данных пользователя."
+		await catch_server_error(update.message, context, error=res, text=text)
 		return RegState.DONE
 
 	log.info(f'User {user.full_name} (ID:{user.id}) started registration.')
