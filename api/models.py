@@ -122,18 +122,18 @@ class User(models.Model):
 	SEGMENT_CHOICES = ((0, 'Премиум, Средний+'), (1, 'Средний'), (2, 'Средний-, Эконом'),)
 
 	user_id = models.CharField('ID пользователя', max_length=10, blank=True)
-	total_rate = models.FloatField('Общий рейтинг', default=0)
-
 	username = models.CharField('Имя пользователя', max_length=50)
 	name = models.CharField('Полное название', max_length=150, blank=True)
 	access = models.SmallIntegerField('Вид доступа', choices=ACCESS_CHOICES, default=0)
 	description = models.TextField('Описание', blank=True)
 	categories = models.ManyToManyField(Category, verbose_name='Виды деятельности', related_name='users')
-	business_start_year = models.PositiveSmallIntegerField('Опыт работы', null=True, blank=True, help_text="Год начала деятельности")
+	business_start_year = models.PositiveSmallIntegerField('Опыт работы', null=True, blank=True,
+	                                                       help_text="Год начала деятельности")
 	main_region = models.ForeignKey(
 		Region, verbose_name='Основной регион', on_delete=models.SET_NULL, related_name='user_main_region', null=True
 	)
-	regions = models.ManyToManyField(Region, verbose_name='Дополнительные регионы', related_name='users_add_regions', blank=True)
+	regions = models.ManyToManyField(Region, verbose_name='Дополнительные регионы', related_name='users_add_regions',
+	                                 blank=True)
 	segment = models.SmallIntegerField('Сегмент рынка', choices=SEGMENT_CHOICES, null=True, blank=True)
 	address = models.CharField('Адрес', max_length=150, null=True, blank=True)
 	phone = models.CharField('Телефон', validators=[phone_regex], max_length=20, blank=True)
@@ -142,6 +142,7 @@ class User(models.Model):
 	site_url = models.URLField('Ссылка на сайт', blank=True)
 	created_date = models.DateField('Дата регистрации', auto_now_add=True)
 
+	total_rating = models.FloatField('Общий рейтинг', default=0)
 	token = models.ForeignKey(Token, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_token')
 
 	class Meta:
@@ -153,65 +154,103 @@ class User(models.Model):
 		return f'{self.name or self.username}'
 
 	def save(self, *args, **kwargs):
-		is_new = self.pk is None # Check if the model is being saved for the first time
+		is_new = self.pk is None
 		super().save(*args, **kwargs)
 
 		if is_new:
-			self.update_total_rate()
+			self.update_total_rating()
 
 	def delete(self, *args, **kwargs):
-		# Удаление файлов при удалении пользователя
+		# Удаление прикрепленных файлов при удалении пользователя
 		for file in self.files.all():
 			file.delete()
 		super().delete(*args, **kwargs)
 
-	def update_total_rate(self):
-		self.total_rate = self.calculate_total_rate()
+	def update_total_rating(self):
+		self.total_rating = self.calculate_total_rating()
 		if self.segment == "":
 			self.segment = None
 		self.save()
 
-	def calculate_total_rate(self, author=None):
-		all_fields = [field.name for field in Rate._meta.fields if isinstance(field, models.PositiveSmallIntegerField)]
-		required_fields = [field.name for field in Rate._meta.fields if
+	@classmethod
+	def format_rating(cls, rates: dict, receiver_id: int = None, author_id: int = None):
+		if not rates:
+			return {}
+		formatted_rates = {}
+		if author_id:
+			formatted_rates['author_id'] = author_id
+			if receiver_id:
+				formatted_rates['receiver_id'] = receiver_id
+
+		for field_name, val in rates.items():
+			field = field_name.rstrip('_avg')
+			formatted_rates[field] = val
+
+		return formatted_rates
+
+	def calculate_total_rating(self, author: int = None):
+		all_fields = [field.name for field in Rating._meta.fields if
+		              isinstance(field, models.PositiveSmallIntegerField)]
+		required_fields = [field.name for field in Rating._meta.fields if
 		                   isinstance(field, models.PositiveSmallIntegerField) and not field.null]
+
 		query = Q(receiver=self)
 		if author:
 			query &= Q(author=author)
-		rates = Rate.objects.filter(query).aggregate(
-			total_rate=Case(
-				When(receiver__categories__group=1,
-				     then=Avg(sum(F(field) for field in required_fields)) / len(required_fields)),
-				When(receiver__categories__group=2, then=Avg(sum(F(field) for field in all_fields)) / len(all_fields)),
+
+		rating = Rating.objects.filter(query).aggregate(
+			total=Case(
+				When(
+					receiver__categories__group=1,
+					then=Avg(sum(F(field) for field in required_fields)) / len(required_fields)
+				),
+				When(
+					receiver__categories__group=2,
+					then=Avg(sum(F(field) for field in all_fields)) / len(all_fields)
+				),
 				output_field=FloatField(),
 				default=0
 			)
 		)
 
-		return round(rates.get('total_rate', 0), 1)
+		return round(rating.get('total', 0), 1)
 
-	def calculate_average_rating(self, author=None):
-		all_fields = [field.name for field in Rate._meta.fields if isinstance(field, models.PositiveSmallIntegerField)]
-		required_fields = [field.name for field in Rate._meta.fields if
-		                   isinstance(field, models.PositiveSmallIntegerField) and not field.null]
+	def calculate_avg_ratings(self, author: int = None):
 		query = Q(receiver=self)
-
 		if author:
 			query &= Q(author=author)
-		if self.categories.filter(group=1).exists():
-			fields = required_fields
+
+		if self.categories.filter(group=1).exists():  # required fields
+			fields = [
+				field.name for field in Rating._meta.fields
+				if isinstance(field, models.PositiveSmallIntegerField) and not field.null
+			]
+
 		elif self.categories.filter(group=2).exists():
-			fields = all_fields
+			fields = [
+				field.name for field in Rating._meta.fields
+				if isinstance(field, models.PositiveSmallIntegerField)
+			]
+
 		else:
 			return None
 
-		rates = Rate.objects.filter(query).aggregate(
+		avg_rating = Rating.objects.filter(query).aggregate(
 			**{f'{field}_avg': Avg(F(field)) for field in fields}
 		)
-		return rates
 
-	def get_rating_voices_count(self):
-		return self.received_rate.count()
+		if not avg_rating:
+			return None
+
+		no_rating = not all(val for val in avg_rating.values())
+		if no_rating:
+			return None
+
+		return self.format_rating(avg_rating, receiver_id=self.pk, author_id=author)
+
+	@property
+	def voted_users_count(self):
+		return self.voted_users.count()
 
 	def get_token(self):
 		if self.access > 0:
@@ -262,19 +301,19 @@ class Supplier(User):
 	objects = UserManager(Group.SUPPLIER)
 
 
-class Rate(models.Model):
+class Rating(models.Model):
 	author = models.ForeignKey(
 		User,
-		verbose_name='Автор',
+		verbose_name='Автор оценки',
 		on_delete=models.CASCADE,
-		related_name='left_rate',
+		related_name='rated_users',
 		# limit_choices_to=Q(categories__group=Group.DESIGNER.value)
 	)
 	receiver = models.ForeignKey(
 		User,
-		verbose_name='Получатель',
+		verbose_name='Оцениваемый',
 		on_delete=models.CASCADE,
-		related_name='received_rate',
+		related_name='voted_users',
 		# limit_choices_to=~Q(categories__group=Group.DESIGNER.value)
 	)
 	quality = models.PositiveSmallIntegerField('Качество продукции', null=True, blank=True)
@@ -297,16 +336,31 @@ class Rate(models.Model):
 	def __str__(self):
 		return f'Рейтинг для поставщика {self.receiver}'
 
-	def calculate_average_rate(self):
-		fields = [field.name for field in Rate._meta.fields if isinstance(field, models.PositiveSmallIntegerField)]
-		avg_values = []
-		for field in fields:
-			avg_values.append(getattr(self, field, None))
-		return round(sum(avg_values) / len(fields), 1) if fields else None
+	def delete(self, *args, **kwargs):
+		receiver = self.receiver
+		super().delete(*args, **kwargs)
+		receiver.update_total_rating()
 
 	def save(self, *args, **kwargs):
 		super().save(*args, **kwargs)
-		self.receiver.update_total_rate()
+		self.receiver.update_total_rating()
+
+	@property
+	def avg_rating(self):
+		if self.receiver.categories.filter(group=1).exists(): # required fields
+			fields = [
+				field.name for field in self._meta.fields
+				if isinstance(field, models.PositiveSmallIntegerField) and not field.null
+			]
+
+		else:
+			fields = [
+				field.name for field in self._meta.fields
+				if isinstance(field, models.PositiveSmallIntegerField)
+			]
+
+		avg_values = [value for value in (getattr(self, field, None) for field in fields) if value is not None]
+		return round(sum(avg_values) / len(avg_values), 1) if avg_values else None
 
 
 class Favourite(models.Model):
@@ -331,12 +385,12 @@ class Favourite(models.Model):
 
 class Feedback(models.Model):
 	text = models.TextField('Отзыв от дизайнера')
-	author = models.ForeignKey(User, verbose_name='Автор', on_delete=models.CASCADE, related_name='left_feedback')
+	author = models.ForeignKey(User, verbose_name='Автор', on_delete=models.CASCADE, related_name='feedback_receivers')
 	receiver = models.ForeignKey(
 		User,
 		verbose_name='Получатель',
 		on_delete=models.CASCADE,
-		related_name='received_feedback',
+		related_name='feedback_authors',
 		limit_choices_to=~Q(categories__group=Group.DESIGNER.value),
 	)
 	created_date = models.DateField('Дата создания отзыва', auto_now_add=True)
@@ -350,45 +404,61 @@ class Feedback(models.Model):
 
 
 class Order(models.Model):
-	STATUS_CHOICES = ((0, 'снят с биржи'), (1, 'активный'), (2, 'завершен'),)
+	STATUS_CHOICES = (
+		(0, 'приостановлен'), (1, 'активный'), (2, 'этап сдачи'), (3, 'завершен'), (4, 'досрочно завершен'),)
 	owner = models.ForeignKey(
 		User,
-		verbose_name='Владелец заказа',
+		verbose_name='Автор заказа',
 		on_delete=models.CASCADE,
-		related_name='order_owner',
+		related_name='orders',
 		limit_choices_to=Q(categories__group=Group.DESIGNER.value),
 	)
 	title = models.CharField('Название заказа', max_length=100)
-	description = models.TextField('Описание заказа')
+	description = models.TextField('Описание заказа', blank=True)
 	categories = models.ManyToManyField(
 		Category,
 		verbose_name='Категории',
-		related_name='orders',
+		related_name='categories_orders',
 		limit_choices_to=Q(group=Group.OUTSOURCER.value),
-		blank=True
 	)
-	responding_users = models.ManyToManyField(
+	responded_users = models.ManyToManyField(
 		User,
-		verbose_name='Претенденты на заказ',
-		related_name='orders',
+		verbose_name='Откликнувшиеся на заказ',
+		related_name='user_order',
 		limit_choices_to=Q(categories__group=Group.OUTSOURCER.value),
 		blank=True,
 	)
 	executor = models.ForeignKey(
 		User,
-		verbose_name='Исполнитель заказа',
+		verbose_name='Выбран в качестве исполнителя',
 		on_delete=models.SET_NULL,
-		related_name='order_executor',
+		related_name='executor_order',
 		limit_choices_to=Q(categories__group=Group.OUTSOURCER.value),
 		null=True,
 		blank=True
 	)
+
+	price = models.PositiveIntegerField('Стоимость услуги', null=True, blank=True)
 	expire_date = models.DateField('Дата завершения', null=True, blank=True)
 	status = models.PositiveSmallIntegerField('Статус заказа', choices=STATUS_CHOICES, default=1)
 
 	class Meta:
 		verbose_name = 'Заказ на бирже'
-		verbose_name_plural = 'Заказы'
+		verbose_name_plural = 'Биржа услуг'
+
+	def add_responding_user(self, user_id):
+		try:
+			user_id = int(user_id)
+			self.responded_users.add(user_id)
+		except ValueError:
+			pass
+
+	def remove_responding_user(self, user_id):
+		try:
+			user_id = int(user_id)
+			self.responded_users.remove(user_id)
+		except ValueError:
+			pass
 
 	def __str__(self):
 		return self.title

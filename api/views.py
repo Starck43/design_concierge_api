@@ -1,19 +1,22 @@
+from datetime import date
+from functools import cached_property
+
 import requests
 from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel
-from rest_framework import generics, status
+from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F
+from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import (
-	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, ListCreateAPIView, RetrieveAPIView
+	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, RetrieveAPIView
 )
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rate, Region, File, Order, Favourite, Group
+from api.models import Category, User, Rating, Region, File, Order, Favourite, Group
 from .serializers import (
-	CategorySerializer, UserListSerializer, RateSerializer, RegionSerializer, UserDetailSerializer,
+	CategorySerializer, UserListSerializer, RatingSerializer, RegionSerializer, UserDetailSerializer,
 	FileUploadSerializer, OrderSerializer, FavouriteSerializer
 )
 
@@ -80,7 +83,7 @@ class UserList(ListAPIView):
 			groups = list(map(int, groups))
 			queryset = queryset.filter(categories__group__in=groups)
 
-		return queryset.order_by('-total_rate', 'username')
+		return queryset.order_by('-total_rating', 'username')
 
 	def get(self, request, *args, **kwargs):
 		id = request.query_params.get('id')
@@ -96,10 +99,10 @@ class UserList(ListAPIView):
 			try:
 				user = User.objects.get(**params)
 				if is_rated:
-					if Rate.objects.filter(author=user).exists():
-						user.has_given_rating = True
+					if Rating.objects.filter(author=user).exists():
+						user.is_rated = True
 					else:
-						user.has_given_rating = False
+						user.is_rated = False
 
 				serializer = UserDetailSerializer(user)
 				return Response(serializer.data)
@@ -136,25 +139,35 @@ class UserDetail(APIView):
 	def get(self, request, pk=None):
 		user = self.get_user(pk)
 		related_user_id = request.query_params.get('related_user')
+		with_details = request.query_params.get('with_details')
 		context = {}
 
 		if not isinstance(user, User):
 			return user
 
+		token = user.get_token()
+		headers = {'token': token}
+
+		if not with_details or (with_details and with_details.lower() == 'false'):
+			data = {
+				"id": user.id,
+				"user_id": user.user_id,
+				"name": user.__str__(),
+				"username": user.username,
+				"categories": user.categories.values_list("id", flat=True),
+				"groups": user.categories.values_list('group', flat=True).distinct(),
+				"total_rating": user.total_rating
+			}
+			return Response(data, status=status.HTTP_200_OK, headers=headers)
+
 		if related_user_id:
 			try:
-				# получим по id дизайнера и привяжем к пользователю рейтинг дизайнера, если он есть
-				designer = User.objects.get(id=related_user_id, categories__group=Group.DESIGNER.value)
-				rating = user.calculate_average_rating(author=designer)
-				context['related_designer_rating'] = rating
-			except User.DoesNotExist:
-				pass
-
-			try:
+				context['related_user'] = int(related_user_id)
 				# проверим Избранное для дизайнера и поставщика
 				Favourite.objects.get(designer=related_user_id, supplier=user)
 				user.in_favourite = True
-			except Favourite.DoesNotExist:
+
+			except (ValueError, Favourite.DoesNotExist):
 				user.in_favourite = False
 
 		else:
@@ -166,8 +179,6 @@ class UserDetail(APIView):
 				pass
 
 		serializer = UserDetailSerializer(user, context=context)
-		token = user.get_token()
-		headers = {'token': token}
 		return Response(serializer.data, status=status.HTTP_200_OK, headers=headers)
 
 	def post(self, request):
@@ -201,11 +212,11 @@ class UserDetail(APIView):
 
 
 class RatingListView(ListAPIView):
-	serializer_class = RateSerializer
+	serializer_class = RatingSerializer
 
 	def get_queryset(self):
 		receiver_id = self.kwargs['receiver_id']
-		return Rate.objects.filter(receiver_id=receiver_id)
+		return Rating.objects.filter(receiver_id=receiver_id)
 
 
 class UpdateRatingView(APIView):
@@ -214,23 +225,25 @@ class UpdateRatingView(APIView):
 	lookup_field = 'user_id'
 
 	def post(self, request, user_id):
-		designer = get_object_or_404(User, user_id=user_id)
-		receiver_rates = request.data
-		user_ratings = []
+		if not request.data:
+			return Response(data=[], status=status.HTTP_304_NOT_MODIFIED)
 
-		for rate in receiver_rates:
-			receiver_id = rate.pop("receiver_id", None)
+		author = get_object_or_404(User, user_id=user_id)
+		author_id = author.id
+		rating_data = []
+		for rate in request.data:
+			receiver_id = rate.pop('receiver_id', None)
 			# Если пользователь выставляет оценки самому себе, то вернем код 304
-			if receiver_id == designer.id:
+			if receiver_id == author_id:
 				return Response(data=[], status=status.HTTP_304_NOT_MODIFIED)
 
 			try:
 				# Если рейтинг для этого автора и получателя уже существует, то обновим его
-				rating = Rate.objects.get(author_id=designer.id, receiver_id=receiver_id)
-				serializer = RateSerializer(rating, data=rate, partial=True)
-			except Rate.DoesNotExist:
-				rate.update({"author": designer.id, "receiver": receiver_id})
-				serializer = RateSerializer(data=rate, partial=True)
+				rating = Rating.objects.get(author_id=author_id, receiver_id=receiver_id)
+				serializer = RatingSerializer(rating, data=rate, partial=True)
+			except Rating.DoesNotExist:
+				rate.update({'author': author_id, 'receiver': receiver_id})
+				serializer = RatingSerializer(data=rate, partial=True)
 
 			try:
 				serializer.is_valid(raise_exception=True)
@@ -239,13 +252,12 @@ class UpdateRatingView(APIView):
 			rating = serializer.save()
 
 			# Получим обновленный рейтинг и вернем его ответом
-			user_ratings.append({
-				"id": receiver_id,
-				"receiver_name": str(rating.receiver),
-				"author_rate": rating.calculate_average_rate(),
-				"total_rate": rating.receiver.total_rate
+			rating_data.append({
+				"receiver_id": receiver_id,
+				"author_id": author_id,
+				"related_total_rating": rating.avg_rating
 			})
-		return Response(data=user_ratings, status=status.HTTP_200_OK)
+		return Response(data=rating_data, status=status.HTTP_200_OK)
 
 
 # Чтение Избранного для дизайнера
@@ -276,28 +288,111 @@ class UpdateFavouriteView(APIView):
 
 	def delete(self, request, user_id, supplier_id):
 		favourite = self.get_favourite(user_id, supplier_id)
-		supplier_name = str(favourite)
+		# supplier_name = str(favourite)
 		favourite.delete()
-		return Response({"username": "sdsdsd"}, status=status.HTTP_204_NO_CONTENT)
+		return Response(data={}, status=status.HTTP_204_NO_CONTENT)
 
 
-# Получение списка заказов и создание заказа
-class OrderListView(ListCreateAPIView):
-	queryset = Order.objects.all()
+# Получение списка заказов
+class OrderListView(ListAPIView):
 	serializer_class = OrderSerializer
+	queryset = Order.objects.all()
+
+	@cached_property
+	def filtered_queryset(self):
+		queryset = super().get_queryset()
+		cat_ids = self.request.query_params.getlist('categories')  # категории, в которых созданы заказы
+		owner_id = self.request.query_params.get('owner_id')  # id создателя заказов
+		executor_id = self.request.query_params.get('executor_id')  # id исполнителя заказов
+		exclude_owner_id = self.request.query_params.get('exclude_owner_id')  # id исполнителя для исключения из выборки
+		order_status = self.request.query_params.getlist(
+			'status')  # статус заказа: 0 - снят, 1 - активный, 2 - завершен
+		actual_order = self.request.query_params.get('actual')  # флаг заказа с действующей датой или бессрочно
+
+		q = Q()
+		if cat_ids:
+			# Присоединение категорий с к запросу
+			q &= Q(categories__id__in=cat_ids)
+
+		if owner_id:
+			q &= Q(owner_id=owner_id)
+
+		if executor_id:
+			q &= Q(executor_id=executor_id)
+
+		if order_status:
+			if isinstance(order_status, list):
+				q &= Q(status__in=order_status)
+			else:
+				q &= Q(status=order_status)
+
+		if actual_order and actual_order.lower() != "false":
+			q &= (Q(executor__isnull=True) | Q(executor__in=F('responded_users'))) & (
+					Q(expire_date__gte=date.today()) | Q(expire_date__isnull=True)
+			)
+
+		if exclude_owner_id:
+			q &= ~Q(owner=exclude_owner_id)
+
+		return queryset.filter(q).order_by('-status', 'executor', 'expire_date')
+
+	def get_queryset(self):
+		return self.filtered_queryset.distinct()
 
 
 # Обновление и удаление заказа
-class OrderView(RetrieveUpdateDestroyAPIView):
+class OrderDetail(RetrieveUpdateDestroyAPIView):
 	queryset = Order.objects.all()
 	serializer_class = OrderSerializer
 
+	def post(self, request, *args, **kwargs):
+		if request.path.endswith('/create/'):
+			# owner_id = request.data.get('owner')
+			# if owner_id:
+			# 	owner = User.objects.get(id=owner_id)
+			# 	request.data['owner'] = owner
+			serializer = self.get_serializer(data=request.data, partial=True)
+			if serializer.is_valid():
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+		else:
+			instance = self.get_object()
+			serializer = self.get_serializer(instance, data=request.data, partial=True)
+			if serializer.is_valid():
+				# если заказ приостановлен или завершен, то очистим список претендентов
+				if request.data.get('status') in [0, 3]:
+					serializer.validated_data['responded_users'] = []
+
+				user_id = request.query_params.get('add_user')
+				if user_id:
+					instance.add_responding_user(user_id)  # добавление пользователя в список претендентов
+
+				user_id = request.query_params.get('remove_user')
+				if user_id:
+					instance.remove_responding_user(user_id)  # удаление пользователя из списка претендентов
+
+				user_id = request.query_params.get('clear_executor')
+				if user_id:
+					instance.executor = None
+					instance.remove_responding_user(user_id)  # удаление существующего исполнителя из списка претендентов
+
+				serializer.save()
+
+				return Response(serializer.data, status=status.HTTP_200_OK)
+		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+	def delete(self, request, *args, **kwargs):
+		instance = self.get_object()
+		self.perform_destroy(instance)
+		return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 # Получение списка вопросов для выставления рейтинга
-class RateQuestionsView(APIView):
+class RatingQuestionsView(APIView):
 	def get(self, request):
 		try:
-			fields = Rate._meta.get_fields()
+			fields = Rating._meta.get_fields()
 		except exceptions:
 			return Response([])
 
@@ -325,7 +420,7 @@ class UserFieldNamesView(APIView):
 	""" Чтение названий полей модели User"""
 
 	def get(self, request, *args, **kwargs):
-		excludes = ["id", "user_id", "total_rate", "created_date", "token"]
+		excludes = ["id", "user_id", "total_rating", "created_date", "token"]
 		field_names = {
 			f.name: f.verbose_name or f.name for f in User._meta.get_fields()
 			if f.name not in excludes and not isinstance(f, (ManyToOneRel, ManyToManyRel, OneToOneRel))

@@ -9,7 +9,7 @@ class UserForm(forms.ModelForm):
 		fields = '__all__'
 		widgets = {
 			'description': forms.Textarea(attrs={'rows': 3}),
-			'total_rate': forms.TextInput(attrs={'suffix': '️⭐', 'label': 'Рейтинг'}),
+			'total_rating': forms.TextInput(attrs={'suffix': '️⭐', 'label': 'Рейтинг'}),
 		}
 
 	def __init__(self, *args, **kwargs):

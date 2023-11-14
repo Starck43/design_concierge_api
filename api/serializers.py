@@ -1,8 +1,7 @@
-from abc import ABC
-
 from rest_framework import serializers
+from rest_framework.relations import PrimaryKeyRelatedField
 
-from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rate, Feedback, Order
+from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rating, Feedback, Order
 from .models import Region, Country
 
 
@@ -44,18 +43,21 @@ class UserListSerializer(serializers.ModelSerializer):
 
 	class Meta:
 		model = User
-		fields = ['id', 'username', 'groups', 'total_rate']
-		ordering = ['-total_rate']
+		fields = ['id', 'username', 'name', 'groups', 'total_rating']
+		ordering = ['-total_rating']
 
 	def get_groups(self, obj):
 		return list(obj.categories.values_list('group', flat=True).distinct())
 
 	def to_representation(self, instance):
 		representation = super().to_representation(instance)
-		representation['total_rate'] = instance.total_rate if instance.total_rate else None
+		representation['username'] = instance.username
+		representation['name'] = instance.__str__()
 		category = self.context.get('category')
 		if category:
 			representation['category'] = int(category)
+		representation['total_rating'] = instance.total_rating if instance.total_rating else None
+
 		return representation
 
 
@@ -63,10 +65,10 @@ class UserDetailSerializer(UserListSerializer):
 	categories = CategorySerializer(many=True, read_only=True, partial=True)
 	regions = RegionSerializer(many=True, read_only=True, partial=True)
 	main_region = RegionSerializer(many=False, read_only=True, partial=True)
-	average_rating = serializers.SerializerMethodField()
-	related_designer_rating = serializers.SerializerMethodField(read_only=True)
-	rating_voices_count = serializers.SerializerMethodField()
-	has_given_rating = serializers.BooleanField(read_only=True)
+	detail_rating = serializers.SerializerMethodField()
+	related_detail_rating = serializers.SerializerMethodField(read_only=True)
+	voted_users_count = serializers.SerializerMethodField()
+	is_rated = serializers.BooleanField(read_only=True)
 	in_favourite = serializers.BooleanField(read_only=True)
 	favourites = serializers.SerializerMethodField(read_only=True)
 
@@ -75,29 +77,20 @@ class UserDetailSerializer(UserListSerializer):
 		# fields = '__all__'
 		exclude = ('token',)
 
-	def format_rating(self, rates: dict):
-		if not rates:
-			return {}
-		formatted_rates = {'receiver_id': self.instance.id}
-		for field_name, rate in rates.items():
-			field = field_name.rstrip('_avg')
-			formatted_rates[field] = rate
+	def get_detail_rating(self, obj):
+		return obj.calculate_avg_ratings()
 
-		return formatted_rates
+	def get_related_detail_rating(self, obj):
+		user_id = self.context.get('related_user')
+		if not user_id:
+			return None
+		return obj.calculate_avg_ratings(author=user_id)
 
-	def get_average_rating(self, obj):
-		avg_rating = obj.calculate_average_rating()
-		return self.format_rating(avg_rating)
-
-	def get_related_designer_rating(self, obj):
-		rating = self.context.get('related_designer_rating')
-		return self.format_rating(rating)
-
-	def get_rating_voices_count(self, obj):
-		return obj.get_rating_voices_count()
+	def get_voted_users_count(self, obj):
+		return obj.voted_users_count
 
 	def get_favourites(self, obj):
-		return self.context.get('favourites')
+		return self.context.get('favourites', [])
 
 	def to_internal_value(self, data):
 		validated_data = super().to_internal_value(data)
@@ -152,23 +145,25 @@ class FavouriteSerializer(serializers.ModelSerializer):
 
 	def to_representation(self, instance):
 		return {
-			'supplier_id': instance.supplier.id,
-			'supplier_name': str(instance.supplier),
+			'id': instance.supplier.id,
+			'username': instance.supplier.username,
+			'name': str(instance.supplier),
+			'total_rating': instance.supplier.total_rating
 		}
 
 
-class RateSerializer(serializers.ModelSerializer):
+class RatingSerializer(serializers.ModelSerializer):
 	# avg_rating = serializers.SerializerMethodField(read_only=True)
 
 	class Meta:
-		model = Rate
+		model = Rating
 		fields = '__all__'
 
 	def to_representation(self, instance):
 		return {
 			'author_id': instance.author.id,
 			'author_name': str(instance.author),
-			'avg_rating': instance.calculate_average_rate()
+			'avg_rating': instance.avg_rating
 		}
 
 
@@ -179,11 +174,39 @@ class FeedbackSerializer(serializers.ModelSerializer):
 
 
 class OrderSerializer(serializers.ModelSerializer):
-	categories = CategorySerializer(many=True, read_only=True, partial=True)
+	categories = CategorySerializer(many=True, read_only=True)
+	responded_users = UserListSerializer(many=True, read_only=False, partial=True)
+	executor = PrimaryKeyRelatedField(many=False, queryset=User.objects.all())
 
 	class Meta:
 		model = Order
 		fields = '__all__'
+
+	def create(self, validated_data):
+		cat_ids = self.initial_data.get('categories')
+		if cat_ids:
+			validated_data['categories'] = Category.objects.filter(id__in=cat_ids)
+		return super().create(validated_data)
+
+	def update(self, instance, validated_data):
+		# Обработка обновления вложенных полей с read_only=False
+		responded_users_data = validated_data.pop('responded_users', None)
+		if responded_users_data is not None:
+			# Обновление списка responded_users
+			instance.responded_users.set(responded_users_data)
+
+		# Обновление остальных полей
+		return super().update(instance, validated_data)
+
+	def to_representation(self, instance):
+		order_data = super().to_representation(instance)
+		order_data['owner_name'] = instance.owner.__str__()
+		executor = instance.executor
+
+		if executor and executor not in instance.responded_users.all():
+			order_data['executor_name'] = executor.name or executor.username
+
+		return order_data
 
 
 class FileUploadSerializer(serializers.Serializer):
