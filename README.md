@@ -10,36 +10,25 @@
     Контекст данных, имеющий отношение к чату, 
     включая его статус, состояние диалога, сообщений, клавиатуры, геопозиция и др.
 
-- `menu`
-массив сохраненных состояний интерфейса (_menu состояние, reply сообщение, inline сообщения, reply клавиатура, inline клавиатура_)
+- `sections`
+массив сохраненных состояний раздела
 ```json lines
 [{
     "state": <MenuState>, // type Enum
-    "message": <reply_message>, // type Message
-    "inline_message": <inline_message>, // type Message or list of Message
-    "markup": <reply_markup>, // type ReplyKeyboardMarkup
-    "inline_markup": <inline_markup> // InlineKeyboardMarkup
+    "query_message": <Message.text>, // type str
+    "messages": [<TGMessage>], // type list
+    "reply_markup": <Message.reply_markup>, // type ReplyKeyboardMarkup
+    "callback": <Callback>, // type Callback
+    "save_full_messages": <Boolean>, // type bool
 }]
 ```
-```python
-# Для удобства создана функция, которая добавляет в chat_data["menu"] новый объект в конец списка
-# Пример сохранения нового состояния меню:
-from bot.handlers.common import add_menu_item
-from bot.states.main import MenuState
-state = MenuState.SUPPLIERS_REGISTER
-add_menu_item(context, state=state, markup=back_menu)
-```
 
-- `cats`
-список всех категорий со всеми связанными пользователями (в дальнейшем надо предусмотреть еще разбиение на регионы)
+- `categories`
+список, хранящий выбранные категории при регистрации или при анкетировании.
 
 
-- `cat_users`
-словарь, хранящий запрошенные списки пользователей в категории. Ключ объекта - это id категории
-
-
-- `suppliers`
-словарь, хранящий запрошенные данные о поставщиках. Ключ объекта - это id пользователя
+- `user_role`
+Хранится роль текущего пользователя при работе на Бирже услуг (creator, contender, executor)
 
 
 - `selected_cat`
@@ -47,28 +36,27 @@ add_menu_item(context, state=state, markup=back_menu)
 
 
 - `selected_user`
-объект с данными о текущем пользователе {id, username, groups, total_rate и др}
+объект с подробными данными о текущем пользователе {id, name, username, region, total_rating и др}
 
 
-- `saved_message`
-    Сохраненное сообщение с инлайн клавиатурой, которое будет показано после возврата на верхний уровень меню. \
-    _Удалится после отображения (см. функцию go_back)_
+- `temp_message`
+  (dict) Временные сообщения в текущей секции, которые удаляются после возврата на верхний уровень меню.
 
 
-- `saved_details_message`
-    Сохраненное сообщение карточки пользователя с инлайн клавиатурой с целью обновления измененных данных 
+- `warn_message_id`
+  (int) ID информационного сообщения. Удаляется на экране после перехода в другую секцию
 
 
 - `last_message_id`
-    ID последнего сохраненного сообщения с инлайн клавиатурой для возможности замены сообщения на новое
+  (int) ID сообщения для обращения внутри текущей секции. Очищается при возврате назад
 
 
 - `last_message_ids`
-    Список ID сохраненных сообщений, которые требуется удалить при возврате на верхний уровень меню
+  (dict) Словарь ID сообщений для временного хранения в пределах секции. Очищается при переходе в другую секцию 
 
 
 - `local_data`
-    Временная переменная для хранения промежуточных данных на текущем уровне меню, которая удаляется при возврате назад
+    Словарь для хранения промежуточных данных в текущей секции. Очищается при возврате назад
 
 ### bot_data:
     Контекст общедоступных данных для всех пользователей бота
@@ -119,4 +107,4 @@ add_menu_item(context, state=state, markup=back_menu)
 
 
 ## Additional
-examples: https://github.com/ohld/django-telegram-bot
+example 1: https://github.com/ohld/django-telegram-bot
