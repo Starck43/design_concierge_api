@@ -73,14 +73,14 @@ class UserTestCase(TestCase):
 	def test_user_creation(self):
 		user = User.objects.create(
 			username='Test User',
-			work_experience=5,
+			business_start_year=5,
 			main_region=self.region,
 		)
 		user.groups.add(self.group)
 		user.categories.add(self.category)
 		self.assertEqual(user.username, 'Test User')
 
-		self.assertEqual(user.work_experience, 5)
+		self.assertEqual(user.business_start_year, 5)
 		self.assertEqual(user.main_region, self.region)
 		self.assertIn(self.group, user.groups.all())
 		self.assertIn(self.category, user.categories.all())
@@ -89,14 +89,14 @@ class UserTestCase(TestCase):
 def test_designer_creation(self):
 	designer = Designer.objects.create(
 		username='Test Designer',
-		work_experience=5,
+		business_start_year=5,
 		main_region=self.region,
 	)
 	designer.groups.add(self.group)
 	designer.categories.add(self.category)
 	self.assertEqual(designer.username, 'Test Designer')
 
-	self.assertEqual(designer.work_experience, 5)
+	self.assertEqual(designer.business_start_year, 5)
 	self.assertEqual(designer.main_region, self.region)
 	self.assertIn(self.group, designer.groups.all())
 	self.assertIn(self.category, designer.categories.all())
@@ -105,14 +105,14 @@ def test_designer_creation(self):
 def test_outsourcer_creation(self):
 	outsourcer = Outsourcer.objects.create(
 		username='Test Outsourcer',
-		work_experience=5,
+		business_start_year=5,
 		main_region=self.region,
 	)
 	outsourcer.groups.add(self.group)
 	outsourcer.categories.add(self.category)
 	self.assertEqual(outsourcer.username, 'Test Outsourcer')
 
-	self.assertEqual(outsourcer.work_experience, 5)
+	self.assertEqual(outsourcer.business_start_year, 5)
 	self.assertEqual(outsourcer.main_region, self.region)
 	self.assertIn(self.group, outsourcer.groups.all())
 	self.assertIn(self.category, outsourcer.categories.all())
@@ -121,14 +121,14 @@ def test_outsourcer_creation(self):
 def test_supplier_creation(self):
 	supplier = Supplier.objects.create(
 		username='Test Supplier',
-		work_experience=5,
+		business_start_year=5,
 		main_region=self.region,
 	)
 	supplier.groups.add(self.group)
 	supplier.categories.add(self.category)
 	self.assertEqual(supplier.username, 'Test Supplier')
 
-	self.assertEqual(supplier.work_experience, 5)
+	self.assertEqual(supplier.business_start_year, 5)
 	self.assertEqual(supplier.main_region, self.region)
 	self.assertIn(self.group, supplier.groups.all())
 	self.assertIn(self.category, supplier.categories.all())

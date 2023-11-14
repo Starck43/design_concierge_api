@@ -4,13 +4,13 @@ from telegram.ext import CallbackContext, ConversationHandler
 
 from bot.bot_settings import CHANNEL_ID
 from bot.constants.menus import main_menu, post_menu
-from bot.utils import allowed_roles, generate_reply_keyboard
+from bot.utils import allowed_roles
 from bot.states.post import PostState
 
 
 @allowed_roles(['creator', 'administrator'], channel_id=CHANNEL_ID)
 async def create_new_post(update: Update, context: CallbackContext):
-	context.user_data['post'] = {'text': '', 'photo': []}
+	context.chat_data['post'] = {'text': '', 'photo': []}
 
 	await update.message.reply_text(
 		"Новый пост.\n"
@@ -23,7 +23,7 @@ async def create_new_post(update: Update, context: CallbackContext):
 
 async def process_post_text(update, context):
 	text = update.message.text
-	post_data = context.user_data['post']
+	post_data = context.chat_data['post']
 
 	if post_data['text'] == "":
 		post_text = "Текст добавлен"
@@ -32,27 +32,21 @@ async def process_post_text(update, context):
 
 	post_data.update({'text': text})
 
-	await update.message.reply_text(
-		post_text,
-		reply_markup=post_menu
-	)
+	await update.message.reply_text(post_text, reply_markup=post_menu)
 
 	return PostState.CHOOSING
 
 
 async def process_post_photo(update, context):
 	photo = update.message.photo[-1]
-	context.user_data['post']['photo'].append(photo.file_id)
-	await update.message.reply_text(
-		"Фото добавлено к посту.",
-		reply_markup=post_menu
-	)
+	context.chat_data['post']['photo'].append(photo.file_id)
+	await update.message.reply_text("Фото добавлено к посту.", reply_markup=post_menu)
 
 	return PostState.CHOOSING
 
 
 async def send_post(update, context) -> str:
-	post = context.user_data['post']
+	post = context.chat_data['post']
 	text = post['text']
 	photo_ids = post['photo']
 
@@ -64,17 +58,14 @@ async def send_post(update, context) -> str:
 	await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
 	await update.message.reply_text("Пост успешно отправлен в канал.")
 
-	context.user_data.clear()
+	context.chat_data.pop("post", None)
 	return ConversationHandler.END
 
 
 async def cancel_post(update: Update, context: CallbackContext):
-	user_group = context.user_data["details"]["group"]
-	keyboard = main_menu.get(user_group, None)
-	menu_markup = generate_reply_keyboard(keyboard)
 	await update.message.reply_text(
-		"Отправка поста отменена.",
-		reply_markup=menu_markup
+		"Отправка поста отменена.\n",
+		reply_markup=None
 	)
-	context.user_data.clear()
+	context.chat_data.pop("post", None)
 	return ConversationHandler.END
