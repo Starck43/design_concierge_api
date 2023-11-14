@@ -5,28 +5,26 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
-from bot.constants.common import ORDER_RELATED_USERS_TITLE
 from bot.constants.keyboards import (
 	CONFIRM_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SUBMIT_REG_KEYBOARD, CANCEL_REG_KEYBOARD, START_REG_KEYBOARD,
-	SEGMENT_KEYBOARD, REG_GROUP_KEYBOARD, REPEAT_KEYBOARD, ORDER_EXECUTOR_KEYBOARD
+	SEGMENT_KEYBOARD, REG_GROUP_KEYBOARD, REPEAT_KEYBOARD
 )
-from bot.constants.menus import continue_reg_menu, cancel_reg_menu, start_menu, back_menu, done_menu
+from bot.constants.menus import continue_reg_menu, cancel_reg_menu, start_menu, done_menu
 from bot.utils import (
-	generate_inline_keyboard, generate_reply_keyboard, data_list_to_string, format_output_text, find_obj_in_list
+	generate_inline_markup, generate_reply_markup, data_list_to_string, fetch_user_data
 )
 
 
 async def offer_for_registration_message(message: Message, text: str = None) -> Message:
-	reg_menu = generate_reply_keyboard([START_REG_KEYBOARD])
 	return await message.reply_text(
 		text or "ℹ️ Чтобы начать пользоваться Консьерж Сервис, необходимо пройти регистрацию!",
-		reply_markup=reg_menu,
+		reply_markup=generate_reply_markup([START_REG_KEYBOARD])
 	)
 
 
 async def denied_access_message(message: Message) -> None:
 	# TODO: Создать логику отправки сообщений администратору
-	button = generate_inline_keyboard(
+	inline_markup = generate_inline_markup(
 		["Написать администратору"],
 		callback_data="message_for_admin",
 	)
@@ -36,12 +34,12 @@ async def denied_access_message(message: Message) -> None:
 	)
 	await message.reply_text(
 		f'Можете задать вопрос администратору сервиса.',
-		reply_markup=button
+		reply_markup=inline_markup
 	)
 
 
 async def submit_reg_data_message(message: Message) -> Message:
-	submit_reg_menu = generate_inline_keyboard(
+	inline_markup = generate_inline_markup(
 		[SUBMIT_REG_KEYBOARD + CANCEL_REG_KEYBOARD],
 		callback_data=["approve", "cancel"],
 		vertical=True
@@ -50,7 +48,7 @@ async def submit_reg_data_message(message: Message) -> Message:
 	return await message.reply_text(
 		f'ℹ️ В случае отмены Вам придется заново пройти регистрацию.\n'
 		f'Если захотите что-то изменить, то в будущем у Вас появится такая возможность.\n',
-		reply_markup=submit_reg_menu
+		reply_markup=inline_markup
 	)
 
 
@@ -101,16 +99,8 @@ async def interrupt_reg_message(message: Message, text: str = None) -> None:
 
 
 async def share_link_message(message: Message, link: str, link_text: str, text: str) -> None:
-	button = InlineKeyboardMarkup(
-		[[
-			InlineKeyboardButton(
-				link_text,
-				url=link,
-				callback_data="share_link"
-			)
-		]]
-	)
-	await message.reply_text(text, reply_markup=button)
+	inline_markup = InlineKeyboardMarkup([[InlineKeyboardButton(link_text, url=link, callback_data="share_link")]])
+	await message.reply_text(text, reply_markup=inline_markup)
 
 
 async def introduce_reg_message(message: Message) -> Message:
@@ -121,18 +111,18 @@ async def introduce_reg_message(message: Message) -> Message:
 
 	return await message.reply_text(
 		"Кого Вы представляете?",
-		reply_markup=generate_inline_keyboard(REG_GROUP_KEYBOARD),
+		reply_markup=generate_inline_markup(REG_GROUP_KEYBOARD),
 	)
 
 
-async def show_categories_message(
+async def select_categories_message(
 		message: Message,
 		category_list: List,
 		title: str = None,
 		message_id: Optional[int] = None
 ) -> Optional[Message]:
 	if message_id is None:
-		buttons = generate_inline_keyboard(
+		inline_markup = generate_inline_markup(
 			category_list,
 			item_key="name",
 			callback_data="id",
@@ -141,8 +131,9 @@ async def show_categories_message(
 		)
 		return await message.reply_text(
 			title or 'Список категорий:',
-			reply_markup=buttons,
+			reply_markup=inline_markup,
 		)
+
 	else:
 		categories = data_list_to_string(category_list, field_names="name", separator="\n☑️ ")
 
@@ -154,28 +145,50 @@ async def show_categories_message(
 		)
 
 
-async def required_category_warn_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
+async def required_category_warn_message(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		reply_markup: Optional[ReplyKeyboardMarkup] = None,
+		text: str = None
+) -> Message:
+	message = await message.reply_text(
 		text or "⚠️ Необходимо выбрать хотя бы одну категорию!",
+		reply_markup=reply_markup,
 	)
+	context.chat_data["warn_message_id"] = message.message_id
+	return message
 
 
-async def only_in_list_warn_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
+async def only_in_list_warn_message(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		reply_markup: Optional[ReplyKeyboardMarkup] = None,
+		text: str = None
+) -> Message:
+	message = await message.reply_text(
 		text or '⚠️ Можно выбрать категорию только из списка!\n',
-		reply_markup=continue_reg_menu,
+		reply_markup=reply_markup,
 	)
+	context.chat_data["warn_message_id"] = message.message_id
+	return message
 
 
-async def not_validated_warn_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
+async def not_validated_warn_message(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		reply_markup: Optional[ReplyKeyboardMarkup] = None,
+		text: str = None
+) -> Message:
+	message = await message.reply_text(
 		text or "⚠️ Ответ должен обязательно содержать число!\n",
-		reply_markup=continue_reg_menu,
+		reply_markup=reply_markup,
 	)
+	context.chat_data["warn_message_id"] = message.message_id
+	return message
 
 
 async def show_main_region_message(message: Message, text: str = None) -> Message:
-	buttons = generate_reply_keyboard(
+	reply_markup = generate_reply_markup(
 		[CANCEL_REG_KEYBOARD],
 		one_time_keyboard=False,
 		share_location=True
@@ -183,7 +196,7 @@ async def show_main_region_message(message: Message, text: str = None) -> Messag
 
 	return await message.reply_text(
 		text or "Укажите свой основной регион или поделитесь местоположением для автоопределения.",
-		reply_markup=buttons,
+		reply_markup=reply_markup,
 	)
 
 
@@ -215,7 +228,7 @@ async def update_top_regions_message(context: ContextTypes.DEFAULT_TYPE) -> None
 			del chat_data["last_message_id"]
 		return
 
-	top_regions_buttons = generate_inline_keyboard(
+	inline_markup = generate_inline_markup(
 		top_regions_list,
 		item_key="name",
 		callback_data="id",
@@ -226,7 +239,7 @@ async def update_top_regions_message(context: ContextTypes.DEFAULT_TYPE) -> None
 		message = await context.bot.send_message(
 			chat_id=chat_data["chat_id"],
 			text=f'Можете выбрать регион из списка ниже или ввести свой:',
-			reply_markup=top_regions_buttons,
+			reply_markup=inline_markup,
 		)
 		chat_data["last_message_id"] = message.message_id  # Сохраним для изменения сообщения
 
@@ -234,50 +247,54 @@ async def update_top_regions_message(context: ContextTypes.DEFAULT_TYPE) -> None
 		await context.bot.edit_message_reply_markup(
 			chat_id=chat_data["chat_id"],
 			message_id=chat_data["last_message_id"],
-			reply_markup=top_regions_buttons
+			reply_markup=inline_markup
 		)
 
 
 async def confirm_region_message(message: Message, text: str = None) -> Message:
-	buttons = generate_inline_keyboard(
+	inline_markup = generate_inline_markup(
 		[CONFIRM_KEYBOARD],
 		callback_data=["yes", "no"],
 		callback_data_prefix="choose_region_"
 	)
 	return await message.reply_text(
 		f'{text}, все верно?',
-		reply_markup=buttons
+		reply_markup=inline_markup
 	)
 
 
-async def region_selected_warn_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
+async def region_selected_warn_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
+	message = await message.reply_text(
 		f'⚠️ *{text}* был уже выбран!\n',
 		reply_markup=continue_reg_menu,
 	)
+	context.chat_data["warn_message_id"] = message.message_id
 
 
-async def not_found_region_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
+async def not_found_region_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
+	message = await message.reply_text(
 		f"⚠️ Регион с названием '{text or message.text}' не найден!\n"
 		f"Введите корректное название региона.\n",
 		reply_markup=continue_reg_menu,
 	)
+	context.chat_data["warn_message_id"] = message.message_id
 
 
-async def not_detected_region_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
+async def not_detected_region_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
+	message = await message.reply_text(
 		text or "⚠️ Не удалось определить местоположение.\n"
 		        "Введите регион самостоятельно.",
 		reply_markup=continue_reg_menu,
 	)
+	context.chat_data["warn_message_id"] = message.message_id
 
 
-async def required_region_warn_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
+async def required_region_warn_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
+	message = await message.reply_text(
 		text or '⚠️ Необходимо указать хотя бы один регион!',
 		reply_markup=cancel_reg_menu,
 	)
+	context.chat_data["warn_message_id"] = message.message_id
 
 
 async def offer_to_input_socials_message(message: Message, text: str = None) -> None:
@@ -295,7 +312,7 @@ async def incorrect_socials_warn_message(message: Message) -> None:
 
 
 async def offer_to_select_segment_message(message: Message) -> Message:
-	buttons = generate_inline_keyboard(
+	buttons = generate_inline_markup(
 		SEGMENT_KEYBOARD,
 		callback_data_prefix="segment_",
 		vertical=True
@@ -314,50 +331,12 @@ async def offer_to_input_address_message(message: Message) -> Message:
 	)
 
 
-async def offer_to_save_rating_message(message: Message) -> Message:
-	button = generate_inline_keyboard(
-		["✅ Сохранить"],
-		callback_data="save_rating",
-	)
-
+async def success_save_rating_message(message: Message, user_data: dict) -> Message:
 	return await message.reply_text(
-		"После оценки нажмите кнопку\n"
-		"*Сохранить результаты*",
-		reply_markup=button,
-	)
-
-
-async def offer_to_show_authors_for_user_rating_message(message: Message, user: dict) -> Message:
-	button = generate_inline_keyboard(
-		[f'Список участников ({user["rating_voices_count"]})'],
-		callback_data=str(user["id"]),
-		callback_data_prefix="authors_for_user_rating_"
-	)
-
-	return await message.reply_text(
-		f'Посмотреть всех кто оценивал компанию\n' + user["name"],
-		reply_markup=button,
-	)
-
-
-async def show_rating_authors_list_message(message: Message, authors_list: list) -> Message:
-	text = data_list_to_string(authors_list, field_names=["author_name", "⭐️", "avg_rating"])
-	return await message.edit_text('*В рейтинге участвовали:*\n\n' + text, reply_markup=None)
-
-
-async def show_detail_rating_message(message: Message, text: str = "") -> Message:
-	text = "\n" + text if text else ""
-	return await message.reply_text(
-		f'\n{format_output_text("`Общий рейтинг`", text, default_value=" отсутствует", value_tag="_")}'
-	)
-
-
-async def success_save_rating_message(message: Message, user_data: dict) -> None:
-	await message.edit_text(
-		# f'Рейтинг для *{user_data["receiver_name"]}* успешно обновлен!\n'
-		f'Спасибо за оценку ♥\n️'
-		f'*Ваш рейтинг:* ⭐_{user_data["author_rate"]}_\n️'
-		f'*Общий рейтинг:* ⭐_{user_data["total_rate"]}️_\n'
+		f'Рейтинг успешно сохранен!\n'
+		f'Спасибо за оценку ♥️\n\n'
+		f'*Личный рейтинг:* ⭐_{user_data["related_total_rating"]}_\n️'
+		f'*Общий рейтинг:* ⭐_{user_data["total_rating"]}️_\n'
 	)
 
 
@@ -367,43 +346,8 @@ async def yourself_rate_warning_message(message: Message) -> Message:
 	)
 
 
-async def offer_to_cancel_action_message(message: Message, text: str = None) -> Message:
-	buttons = generate_inline_keyboard(
-		[CONFIRM_KEYBOARD],
-		callback_data=["yes", "no"],
-		# callback_data_prefix="cancel_"
-	)
-	return await message.reply_text(
-		text or '*⚠️ Все введенные данные будут утеряны!*\n'
-		        'Все равно отменить?',
-		reply_markup=buttons,
-	)
-
-
-async def offer_to_set_segment_message(message: Message, text: str = None) -> Message:
-	buttons = generate_inline_keyboard(
-		SEGMENT_KEYBOARD,
-		callback_data_prefix="segment_",
-		vertical=True
-	)
-
-	return await message.reply_text(
-		text or "🎯 Сегмент еще не установлен.\n"
-		        "Если работали с ними, то подскажите",
-		reply_markup=buttons
-	)
-
-
-async def show_after_set_segment_message(message: Message, segment: int = None) -> None:
-	# segment_text = SEGMENT_KEYBOARD[segment][0]
-	await message.edit_text(
-		f'Спасибо за Ваш выбор! ❤️',
-		reply_markup=None,
-	)
-
-
 async def add_new_user_message(message: Message, category: dict) -> Message:
-	new_user_buttons = generate_inline_keyboard(
+	inline_markup = generate_inline_markup(
 		["🆕 Добавить компанию"],
 		callback_data=str(category["group"]),
 		callback_data_prefix="add_new_user_",
@@ -411,13 +355,7 @@ async def add_new_user_message(message: Message, category: dict) -> Message:
 
 	return await message.reply_text(
 		f'Порекомендовать компанию в категории *{category["name"].upper()}*',
-		reply_markup=new_user_buttons
-	)
-
-
-async def empty_data_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
-		text or "⚠️ Упс. Ошибка чтения данных!",
+		reply_markup=inline_markup
 	)
 
 
@@ -426,7 +364,7 @@ async def verify_by_sms_message(message: Message) -> Message:
 		"Введите полученный код из смс:",
 		reply_markup=cancel_reg_menu,
 	)
-	button = generate_inline_keyboard([REPEAT_KEYBOARD], callback_data="input_phone")
+	button = generate_inline_markup([REPEAT_KEYBOARD], callback_data="input_phone")
 	return await message.reply_text(
 		f'_Если смс код не пришел или ошибка в номере, то повторите операцию._',
 		reply_markup=button,
@@ -441,12 +379,21 @@ async def continue_reg_message(message: Message, text: str = None) -> None:
 	)
 
 
+async def offer_to_cancel_action_message(message: Message, text: str = None) -> Message:
+	inline_markup = generate_inline_markup([CONFIRM_KEYBOARD], callback_data=["yes", "no"])
+	return await message.reply_text(
+		text or '*❗Несохраненные данные будут утеряны❗️*\n'
+		        'Все равно продолжить?',
+		reply_markup=inline_markup,
+	)
+
+
 async def share_files_message(message: Message, text: str) -> Message:
-	button = generate_inline_keyboard(
+	inline_markup = generate_inline_markup(
 		["Прикрепить файлы"],
 		callback_data="share_files",
 	)
-	return await message.reply_text(text, reply_markup=button)
+	return await message.reply_text(text, reply_markup=inline_markup)
 
 
 async def check_file_size_message(message: Message, file: Union[Document, PhotoSize] = None, limit: int = 5) -> Message:
@@ -457,90 +404,36 @@ async def check_file_size_message(message: Message, file: Union[Document, PhotoS
 		)
 
 
-async def send_unknown_question_message(message: Message, text: str = None) -> Message:
-	return await message.reply_text(
-		text or f'Не вполне понял Вас.\n'
-		        f'Выберите нужный раздел или переформулируйте свой вопрос.',
-		reply_markup=message.reply_markup or back_menu,
+async def send_unknown_question_message(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		reply_markup: Optional[ReplyKeyboardMarkup] = None,
+		text: str = None
+) -> Message:
+	message = await message.reply_text(
+		text or f'❗️К сожалению, я не смог разобрать запрос.\n'
+		        f'Нажмите на интересующий раздел ниже или повторите иначе свой запрос',
+		reply_markup=reply_markup
 	)
+	context.chat_data["warn_message_id"] = message.message_id
+	return message
 
 
-async def place_new_order_message(message: Message, category: str = None, text: str = None) -> Message:
+async def place_new_order_message(message: Message, category: dict = None, text: str = None) -> Message:
 	""" Инлайн сообщение с размещением нового заказа """
-	button = generate_inline_keyboard(["Новый заказ"], callback_data="place_order")
+	inline_markup = generate_inline_markup(["➕ Создать"], callback_data="place_order")
 	title = f'Разместить новый заказ'
 	if category:
-		title += f' в категории {category.upper()}'
+		title += f' в категории {category["name"].upper()}'
 
 	return await message.reply_text(
 		f'_{text or title}_',
-		reply_markup=button,
+		reply_markup=inline_markup,
 	)
-
-
-async def show_inline_message(
-		message: Message,
-		text: str,
-		inline_messages: Optional[List[Message]],
-		inline_markup: Optional[InlineKeyboardMarkup] = None,
-) -> Union[Message]:
-	""" Вывод inline сообщения с добавлением его в список inline_messages """
-
-	inline_message = await message.reply_text(text, reply_markup=inline_markup)
-
-	if not isinstance(inline_messages, list):
-		inline_messages = [inline_messages]
-	inline_messages.append(inline_message)
-
-	return inline_message
-
-
-async def show_order_related_users_message(
-		message: Message,
-		order: dict,
-		inline_messages: Optional[List[Message]]
-) -> None:
-	""" Вывод данных претендентов на активный заказ или исполнителя с inline кнопками управления """
-
-	if not order["responding_users"]:
-		return None
-
-	users = order["responding_users"]
-	executor_id = order["executor"]
-	selected_postfix = ""
-
-	# если есть id исполнителя, то найдем его данные в списке всех претендентов
-	if executor_id:
-		executor, _ = find_obj_in_list(users, {"id": executor_id})
-		if executor:
-			users = [executor]
-			selected_postfix = "__selected"  # подтверждаем, что исполнитель найден среди претендентов
-
-	await show_inline_message(
-		message,
-		f'_{ORDER_RELATED_USERS_TITLE[1] if selected_postfix else ORDER_RELATED_USERS_TITLE[0]}:_',
-		inline_messages=inline_messages
-	)
-
-	for user in users:
-		buttons = [InlineKeyboardButton(ORDER_EXECUTOR_KEYBOARD[0], callback_data=f'user_{user["id"]}')]
-		if order["status"] == 1:
-			buttons.append(InlineKeyboardButton(
-				ORDER_EXECUTOR_KEYBOARD[2 if selected_postfix else 1],
-				callback_data=f'order_{order["id"]}__executor_{user["id"]}{selected_postfix}'
-			))
-
-		await show_inline_message(
-			message,
-			f'*{user["name"]}*'
-			f'{format_output_text("рейтинг", "⭐️" + str(user["total_rate"]) if user["total_rate"] else "не установлен")}',
-			inline_markup=InlineKeyboardMarkup([buttons]),
-			inline_messages=inline_messages
-		)
 
 
 async def select_events_message(message: Message, text: str = None) -> Message:
-	buttons = generate_inline_keyboard(
+	buttons = generate_inline_markup(
 		["Местные", "Российские", "Международные"],
 		callback_data_prefix="event_type_",
 		vertical=True
@@ -553,7 +446,7 @@ async def select_events_message(message: Message, text: str = None) -> Message:
 
 
 async def choose_sandbox_message(message: Message, text: str = None) -> Message:
-	buttons = generate_inline_keyboard(
+	buttons = generate_inline_markup(
 		DESIGNER_SANDBOX_KEYBOARD,
 		callback_data_prefix="sandbox_type_",
 		vertical=False
@@ -564,17 +457,16 @@ async def choose_sandbox_message(message: Message, text: str = None) -> Message:
 	)
 
 
-async def failed_questionnaire_message(message: Message) -> None:
-	await message.reply_text(
+async def failed_questionnaire_message(message: Message) -> Message:
+	return await message.reply_text(
 		text='*Анкетирование было остановлено!*\n',
 		reply_markup=start_menu
 	)
 
 
-async def empty_questionnaire_list_message(message: Message) -> None:
-	await message.reply_text(
-		text='*Список пустой*\n'
-		     'Нечего оценивать, так как не было выбрано ни одного поставщика.\n',
+async def empty_questionnaire_list_message(message: Message) -> Message:
+	return await message.reply_text(
+		text='❗️Вы не выбрали ни одного поставщика\n',
 		reply_markup=start_menu
 	)
 
@@ -592,7 +484,7 @@ async def offer_for_questionnaire_message(
 
 
 async def show_questionnaire_message(message: Message, text: str = None, link_text: str = None) -> Message:
-	button = generate_inline_keyboard(
+	button = generate_inline_markup(
 		[link_text or "Начать анкетирование"],
 		callback_data="questionnaire",
 	)
@@ -603,10 +495,40 @@ async def show_questionnaire_message(message: Message, text: str = None, link_te
 	)
 
 
-async def success_questionnaire_message(message: Message) -> None:
-	await message.reply_text(
-		text='*Анкетирование успешно завершено!*\n'
-		     f'Ваши результаты будут учтены в общем рейтинге поставщиков.\n'
-		     f'Спасибо за уделенное время',
+async def success_questionnaire_message(message: Message) -> Message:
+	return await message.reply_text(
+		text='*✅ Анкетирование успешно завершено!*\n'
+		     f'_Ваши результаты будут учтены в общем рейтинге поставщиков._\n'
+		     f'_Спасибо за уделенное время_',
 		reply_markup=start_menu
 	)
+
+
+async def send_notify_message(
+		context: ContextTypes.DEFAULT_TYPE,
+		user_id: Union[int, list],
+		text: str,
+		from_name: str = None,
+) -> None:
+	"""
+    Функция для отправки уведомлений пользователям.
+    :param context: Контекст выполнения функции.
+    :param user_id: Идентификатор или список идентификаторов пользователей.
+    :param text: Текст уведомления.
+    :param from_name: Имя отправителя уведомления (необязательный параметр).
+    :return: None
+    """
+	if not user_id and not text:
+		return
+
+	if isinstance(user_id, int):
+		user_id = [user_id]
+
+	for _id in user_id:
+		res = await fetch_user_data(_id)
+		data = res["data"]
+		if data and data["user_id"]:
+			await context.bot.send_message(
+				chat_id=data["user_id"],
+				text=f'*❗️Уведомление {"от " + from_name if from_name else ""}*\n\n{text}'
+			)

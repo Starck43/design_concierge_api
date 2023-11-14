@@ -1,6 +1,8 @@
 from enum import Enum
 from typing import Union, List
 
+from telegram.ext import ContextTypes
+
 
 class Group(Enum):
 	DESIGNER: int = 0  # Если пользователь дизайнер
@@ -23,6 +25,23 @@ class Group(Enum):
 			return [Group(n) for n in num if 0 <= n <= 2]
 		else:
 			return Group(3)
+
+	@classmethod
+	def has_role(cls, user_details: dict, role: int):
+		"""
+		    Check if the user has a specific role.
+
+		    Args:
+		        user_details : Detail user data.
+		        role (Group): The role to check.
+
+		    Returns:
+		        bool: True if the user has the specified role, False otherwise.
+		"""
+		if user_details:
+			user_groups = cls.get_enum(user_details.get("groups", [3]))
+			return role in user_groups
+		return False
 
 	@staticmethod
 	def get_groups_code(groups: list):

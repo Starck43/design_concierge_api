@@ -13,21 +13,11 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 	if "details" in user_data:
 		message_text = f'Был рад, {user_data["details"]["username"]}, если помог. Обращайтесь! 👋'
 
-		# if "choice" in user_data:
-		# 	del user_data["choice"]
-		#
-		# if "question" in user_data:
-		# 	del user_data["question"]
-
 	else:
 		context.user_data.clear()
 		message_text = 'До свидания! 👋'
 
 	await update.message.reply_text(message_text, reply_markup=ReplyKeyboardRemove())
 	context.chat_data.clear()
-	context.chat_data.pop("sub_state", None)
-	context.chat_data.pop("saved_message", None)
-	context.chat_data.pop("last_message_id", None)
-	context.chat_data.pop("selected_user", None)
 
 	return ConversationHandler.END

@@ -1,23 +1,26 @@
-from typing import Union, List, Optional, ValuesView, Tuple, Any
+from typing import Union, List, Optional, Tuple, Callable, Literal
 
-from telegram import Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery, Bot, helpers, \
-	InlineKeyboardButton
-from telegram.constants import ParseMode
+from telegram import (
+	Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery, Bot, helpers, InlineKeyboardButton
+)
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from bot.bot_settings import ADMIN_CHAT_ID
-from bot.constants.common import ORDER_STATUS
-from bot.constants.keyboards import BACK_KEYBOARD, ORDER_RESPOND_KEYBOARD
+from bot.constants.keyboards import BACK_KEYBOARD, ORDER_EXECUTOR_KEYBOARD, ORDER_RESPOND_KEYBOARD, SEGMENT_KEYBOARD
 from bot.constants.menus import main_menu, done_menu, back_menu
-from bot.constants.messages import (offer_for_registration_message, share_link_message, yourself_rate_warning_message,
-                                    show_inline_message)
+from bot.constants.messages import (
+	offer_for_registration_message, share_link_message, place_new_order_message, send_unknown_question_message
+)
+from bot.constants.patterns import BACK_PATTERN, BACK_TO_TOP_PATTERN
+from bot.constants.static import ORDER_STATUS, ORDER_RELATED_USERS_TITLE, NO_ORDERS_MESSAGE_TEXT
+from bot.entities import TGMessage
 from bot.logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (
-	fetch_data, filter_list, generate_inline_keyboard, fetch_user_data, find_obj_in_list, extract_fields,
-	match_message_text, dict_to_formatted_text, get_formatted_date, format_output_text
+	fetch_data, filter_list, generate_inline_markup, fetch_user_data, find_obj_in_list, extract_fields,
+	match_query, dict_to_formatted_text, get_formatted_date, format_output_text, update_inline_keyboard
 )
 
 
@@ -54,7 +57,7 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 
 	await query.message.delete()
 
-	current_menu = get_menu_item(context)
+	current_menu = prepare_current_section(context)
 	current_message = current_menu[1]
 	current_inline_message = current_menu[2]
 	# удаление с экрана текущих сообщений
@@ -62,13 +65,12 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 	await delete_messages_by_key(context, current_inline_message)
 
 	# если нажата кнопка Назад, то вернем предыдущее состояние меню, иначе переходим в начальное состояние
-	index = level if match_message_text(BACK_KEYBOARD[0], query.message.text) else 0
-	prev_menu = extract_menu_item(context, index)
+	index = level if match_query(BACK_KEYBOARD[0], query.message.text) else 0
+	prev_menu = pop_section(context, index)
 	if not prev_menu:
-		init_menu = await init_start_menu(context)
 		await delete_messages_by_key(context, "last_message_id")
 		await delete_messages_by_key(context, context.chat_data.get("last_message_ids"))
-		state = init_menu["state"]
+		state = MenuState.START
 
 	else:
 		state, reply_message, inline_message, markup, inline_markup = prev_menu
@@ -78,7 +80,7 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 				text=reply_message.text_markdown,
 				reply_markup=markup
 			)
-			update_menu_item(context, message=reply_message)
+			update_section(context, message=reply_message)
 
 		if inline_message:
 			inline_messages = []
@@ -93,7 +95,7 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 				)
 				inline_messages.append(message)
 
-			update_menu_item(context, inline_messages=inline_messages)
+			update_section(context, inline_messages=inline_messages)
 
 	await delete_messages_by_key(context, "last_message_id")
 	await delete_messages_by_key(context, context.chat_data.get("last_message_ids"))
@@ -119,133 +121,218 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 	return state
 
 
-def add_menu_item(
+async def go_back_section(
+		update: Union[Update, CallbackQuery],
+		context: ContextTypes.DEFAULT_TYPE,
+		command: Literal["back", "top"] = None,
+		level: int = -1
+) -> str:
+	""" Возврат к предыдущей секции или переход в начало """
+	query = update.callback_query
+	chat_data = context.chat_data
+
+	if query:
+		await query.answer()
+	else:
+		query = update
+		try:
+			await query.message.delete()  # удалим текущее сообщение после нажатия на кнопку
+		except TelegramError:
+			pass
+
+	query_message = command or query.message.text
+	if not match_query(BACK_PATTERN, query_message):
+		section = get_section(context)
+		await send_unknown_question_message(query.message, context, reply_markup=section["reply_markup"])
+		return section["state"]
+
+	current_section = pop_section(context)  # удалим секцию из навигации
+	await delete_messages_by_key(context, "temp_messages")
+	await delete_messages_by_key(context, "warn_message_id")
+	await delete_messages_by_key(context, "last_message_id")
+	await delete_messages_by_key(context, "last_message_ids")
+	if current_section:
+		await delete_messages_by_key(context, current_section.get("messages"))
+	chat_data["local_data"] = {}  # обнулим временные сохраненные значения на предыдущем уровне
+
+	# если нажата кнопка "В начало", то присвоим нулевой индекс
+	if not current_section or match_query(BACK_TO_TOP_PATTERN, query_message) or len(chat_data["sections"]) == 1:
+		section_index = 0
+	else:
+		section_index = level
+	back_section = get_section(context, section_index)
+
+	# если необходимо перейти в начало меню или не найден уровень раздела для возврата
+	if section_index == 0 or not back_section:
+		section = await init_start_section(context, state=MenuState.START)
+		return section["state"]
+
+	state = back_section.get("state", None)
+	leave_messages = back_section.get("leave_messages", False)
+	callback = back_section.get("callback")
+
+	if callback:  # если указан колбэк, то перейдем по нему, установив флаг возврата
+		if leave_messages:
+			return state
+		else:
+			back_section["go_back"] = True
+			return await callback(update, context)
+
+	if leave_messages:
+		return state
+
+	# если нет колбэка, но есть сохраненные TGMessage сообщения у раздела ниже, то выведем все не пустые
+	reply_markup = back_section.get("reply_markup", None)
+	tg_messages = []
+	for message in back_section.get("messages", []):
+		if isinstance(message, TGMessage) and message.text:
+			_message = await update.message.reply_text(
+				f'*{message.text.upper()}*' if not message.reply_markup and reply_markup else message.text,
+				reply_markup=message.reply_markup or reply_markup
+			)
+			# единожды добавим к сообщению без reply_markup нижнюю клавиатуру
+			if not message.reply_markup and reply_markup:
+				reply_markup = None
+			tg_messages.append(TGMessage.create_message(_message))
+
+	# обновим id сообщений, которые показали в текущем разделе
+	back_section["messages"] = tg_messages
+
+	return state
+
+
+async def prepare_current_section(context: ContextTypes.DEFAULT_TYPE, leave_messages: bool = False) -> dict:
+	""" Получение и подготовка данных из последнего выбранного раздела перед переходом в новый """
+	current_section = get_section(context).copy()
+	is_back = current_section.get("go_back", False)
+
+	# если переходим в следующий раздел, а не возвращаемся назад
+	if not is_back:
+		update_section(context, leave_messages=leave_messages)
+
+		await delete_messages_by_key(context, "warn_message_id")
+		await delete_messages_by_key(context, "last_message_id")
+		await delete_messages_by_key(context, "last_message_ids")
+
+		current_section["query_message"] = None  # если переходим ниже, то query_message вначале должен быть пустым
+		if not leave_messages:  # если разрешаем удалить сообщения после перехода в новый раздел
+			messages = current_section.get("messages", [])
+			await delete_messages_by_key(context, messages)  # удалим все сообщения с экрана на текущем уровне
+
+	return current_section
+
+
+def add_section(
 		context: ContextTypes.DEFAULT_TYPE,
 		state: str,
-		message: Message = None,
-		inline_messages: Union[Message, List[Message]] = None,
-		markup: ReplyKeyboardMarkup = back_menu,
-		inline_markup: InlineKeyboardMarkup = None
+		query_message: str = None,
+		messages: Union[Message, List[Message], List[int]] = None,
+		callback: Callable = None,
+		save_full_messages: bool = True,
+		**kwargs
 ) -> dict:
-	menu = context.chat_data.setdefault("menu", [])
-	if inline_messages and not isinstance(inline_messages, list):
-		inline_messages = [inline_messages]
+	chat_data = context.chat_data
+	chat_data.setdefault("sections", [])
+	current_section = get_section(context)
+	is_back = current_section.get("go_back", False)
 
-	menu_item = {
+	_messages = TGMessage.create_list(messages, only_ids=bool(callback) or not save_full_messages)
+
+	section = {
 		"state": state,
-		"message": message,
-		"inline_message": inline_messages or [],
-		"markup": markup,
-		"inline_markup": inline_markup
+		"query_message": query_message,
+		"messages": _messages,
+		"reply_markup": None,
+		"callback": callback,
+		**kwargs
 	}
-	menu.append(menu_item)
 
-	return menu_item
+	if is_back:
+		current_section.pop("go_back", None)
+		chat_data["sections"][-1].update(section)
+	else:
+		chat_data["sections"].append(section)
+
+	return section
 
 
-def update_menu_item(
-		context: ContextTypes.DEFAULT_TYPE,
-		state: str = None,
-		message: Message = None,
-		inline_messages: Union[Message, List[Message]] = None,
-		markup: ReplyKeyboardMarkup = None,
-		inline_markup: InlineKeyboardMarkup = None,
-		index: int = -1
-) -> Optional[dict]:
-	menu = context.chat_data.get("menu", [])
-
+def get_section(context: ContextTypes.DEFAULT_TYPE, section_index: int = -1) -> dict:
+	context.chat_data.setdefault("sections", [])
 	try:
-		menu_item = menu[index]
-		if inline_messages and not isinstance(inline_messages, list):
-			inline_messages = [inline_messages]
+		return context.chat_data["sections"][section_index]
+	except IndexError:
+		return {}
 
-		menu_item.update({
-			"state": state or menu_item.get("state"),
-			"message": message or menu_item.get("message"),
-			"inline_message": inline_messages or menu_item.get("inline_message", []),
-			"markup": markup or menu_item.get("markup"),
-			"inline_markup": inline_markup or menu_item.get("inline_markup")
-		})
 
-	except ValueError:
+def update_section(context: ContextTypes.DEFAULT_TYPE, section_index: int = -1, **kwargs) -> Optional[dict]:
+	context.chat_data.setdefault("sections", [])
+	section = get_section(context, section_index)
+
+	if not section:
 		return None
 
-	return menu_item
+	section.update(**kwargs)
+	return section
 
 
-def get_menu_item(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Tuple[Any, ...]:
+def pop_section(context: ContextTypes.DEFAULT_TYPE, section_index: int = -1) -> Optional[dict]:
+	chat_data = context.chat_data
+	sections = chat_data.get("sections")
+
+	if not sections:
+		return None
+
 	try:
-		chat_data = context.chat_data
-		menu = chat_data.get("menu", [])
-		return tuple(menu[index].values())
+		section = sections.pop(section_index)
+		return section
 
 	except IndexError:
-		return None, None, None, None, None
-
-
-def extract_menu_item(context: ContextTypes.DEFAULT_TYPE, index: int = -1) -> Optional[ValuesView]:
-	chat_data = context.chat_data
-	menu = chat_data.get("menu", None)
-
-	if not menu:
-		return None
-
-	try:
-		if index < 0:
-			index = len(menu) + index
-			obj = menu[index]
-			chat_data["menu"] = menu[:index + 1]
-
-		else:
-			obj = menu[index]
-			chat_data["menu"] = menu[0:index + 1]
-
-		return obj.values()
-
-	except ValueError:
 		return None
 
 
-async def init_start_menu(
+async def init_start_section(
 		context: ContextTypes.DEFAULT_TYPE,
-		menu_markup: Optional[ReplyKeyboardMarkup] = main_menu,
+		state: str,
 		text: str = None,
 ) -> dict:
 	chat_data = context.chat_data
-	chat_data["menu"] = []
+	chat_data["sections"] = []
+	group = context.user_data["priority_group"].value
+	reply_markup = main_menu[group]
 
 	message = await context.bot.send_message(
 		chat_id=chat_data["chat_id"],
 		text=text or '*Выберите интересующий раздел:*',
-		reply_markup=menu_markup,
-		parse_mode=ParseMode.MARKDOWN_V2
+		reply_markup=reply_markup
 	)
 
-	return add_menu_item(context, MenuState.START, message, [], menu_markup)
+	return add_section(context, state, messages=message, reply_markup=reply_markup)
 
 
-async def edit_last_message(
-		query: Union[Update, CallbackQuery],
-		context: ContextTypes.DEFAULT_TYPE,
+async def edit_or_reply_message(
+		message: Message,
 		text: str,
-		reply_markup: Union[ReplyKeyboardMarkup, InlineKeyboardMarkup] = None
+		message_id: int = None,
+		reply_markup: InlineKeyboardMarkup = None
 ) -> Message:
-	""" Вывод на экран измененного inline сообщения, сохраненного в 'last_message_id' """
-	chat_data = context.chat_data
-	last_message_id = chat_data.get("last_message_id")
+	""" Вывод на экран измененного сообщения или создание нового """
 
-	if last_message_id:
-		message = await context.bot.edit_message_text(
-			text=text,
-			chat_id=chat_data.get("chat_id"),
-			message_id=last_message_id,
-			reply_markup=reply_markup
-		)
-	else:
-		message = await query.message.reply_text(text=text, reply_markup=reply_markup)
+	if message_id:
+		try:
+			return await message.get_bot().edit_message_text(
+				text=text,
+				chat_id=message.chat_id,
+				message_id=message_id,
+				reply_markup=reply_markup
+			)
 
-	chat_data["last_message_id"] = message.message_id  # сохраним id последнего инлайн сообщения
-	return message
+		except TelegramError:
+			try:
+				await message.get_bot().delete_message(chat_id=message.chat_id, message_id=message_id)
+			except TelegramError:
+				pass
+
+	return await message.reply_text(text=text, reply_markup=reply_markup)
 
 
 async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, message: Union[Message, List[Message], str, None]):
@@ -258,42 +345,58 @@ async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, message: Un
 	if not message or not chat_id:
 		return
 
-	if isinstance(message, Message):
+	if isinstance(message, str):
+		instance = context.chat_data.pop(message, None)
+		if not instance:
+			return
+
+		if isinstance(instance, int):
+			try:
+				await context.bot.delete_message(chat_id=chat_id, message_id=instance)
+			except TelegramError:
+				pass
+
+		elif isinstance(instance, dict):
+			for value in instance.values():
+				if value is not None and (
+						isinstance(value, int) or isinstance(value, TGMessage) or isinstance(value, Message)
+				):
+					try:
+						await context.bot.delete_message(chat_id, value if isinstance(value, int) else value.message_id)
+					except TelegramError:
+						pass
+
+		elif isinstance(instance, list):
+			for value in reversed(instance):
+				try:
+					await context.bot.delete_message(chat_id=chat_id, message_id=value)
+				except TelegramError:
+					pass
+
+	elif isinstance(message, int):
+		try:
+			await context.bot.delete_message(chat_id=chat_id, message_id=message)
+
+		except TelegramError:
+			pass
+
+	elif not isinstance(message, list):
 		message = [message]
 
 	if isinstance(message, list):
-		message_ids = [msg.message_id for msg in message if isinstance(msg, Message)]
-		try:
-			for message_id in message_ids:
+		# если в массиве числа, а не объекты классов
+		for msg in reversed(message):
+			if isinstance(msg, int):
+				message_id = msg
+			elif isinstance(msg, Message) or isinstance(msg, TGMessage):
+				message_id = msg.message_id
+			else:
+				continue
+
+			try:
 				await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-		except TelegramError:
-			pass
-		return
-
-	message_id = context.chat_data.get(message)
-	if not message_id:
-		context.chat_data.pop(message, None)
-		return
-
-	if isinstance(message_id, int):
-		try:
-			await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-		except TelegramError:
-			pass
-
-	try:
-		if isinstance(message_id, dict):
-			for value in message_id.values():
-				await context.bot.delete_message(chat_id=chat_id, message_id=value)
-
-		if isinstance(message_id, list):
-			for value in reversed(message_id):
-				await context.bot.delete_message(chat_id=chat_id, message_id=value)
-
-	except TelegramError:
-		pass
-
-	del context.chat_data[message]
+			except TelegramError:
+				pass
 
 
 def search_message_by_data(message: Message, substring: str, exception: str = "") -> Optional[int]:
@@ -307,7 +410,7 @@ def search_message_by_data(message: Message, substring: str, exception: str = ""
 	Returns:
 		Message ID if a button with the specified substring is found and does not match the exception.
 	"""
-	if hasattr(message, 'reply_markup') and hasattr(message.reply_markup, 'inline_keyboard'):
+	if message.reply_markup:
 		inline_keyboard = message.reply_markup.inline_keyboard
 		for row in inline_keyboard:
 			for button in row:
@@ -317,150 +420,9 @@ def search_message_by_data(message: Message, substring: str, exception: str = ""
 	return None
 
 
-def get_order_status(order: dict) -> Tuple[str, str]:
-	date_string, expire_date, current_date = get_formatted_date(order["expire_date"])
-	is_valid = not expire_date or current_date <= expire_date
-
-	if order["status"] == 0:
-		order_status = ORDER_STATUS[0]
-	elif order["status"] == 1:
-		if not is_valid:
-			order_status = ORDER_STATUS[4]
-		elif order["executor"]:
-			order_status = ORDER_STATUS[3]
-		else:
-			order_status = ORDER_STATUS[1]
-	else:
-		order_status = ORDER_STATUS[2]
-
-	return order_status, date_string
-
-
-def check_user_in_groups(groups: List[int], allowed_codes: Union[str, List[str]]) -> bool:
-	""" Проверяем у пользователя принадлежность к одной из групп через кодовые обозначения
-	Args:
-		groups: группы пользователя в виде списка от 0 до 2.
-		allowed_codes: проверяемые коды групп, где:
-			'D' - Designer, 'O' - Outsourcer, 'DO' - Designer + Outsourcer, 'S' - Supplier
-
-	Returns:
-		True - если пользователь принадлежит одной из кодовых групп or False, если нет совпадений
-
-	Examples:
-		check_user_in_groups([0,1], "S") # False \n
-		check_user_in_groups([0,1], ["D", "S"]) # True
-	"""
-
-	if not groups:
-		return False
-
-	user_role = Group.get_groups_code(groups)
-	if user_role == "U":
-		return False
-
-	if isinstance(allowed_codes, str):
-		allowed_codes = [allowed_codes]
-
-	return any(role in allowed_codes for role in user_role)
-
-
-async def show_user_orders(
-		message: Message,
-		orders: list,
-		user_role: str,
-		user_id: Optional[int] = None,
-		title: str = None,
-		reply_markup: Optional[ReplyKeyboardMarkup] = back_menu
-) -> Tuple[Optional[Message], Optional[Union[Message, List[Message]]]]:
-	""" Вывод на экран списка заказов пользователя по его id.:
-
-		Args:
-			message: объект с сообщением,
-			orders: заказы дизайнера,
-			user_role: флаг указывающий на то, что текущий пользователь есть автор заказов,
-			user_id: id текущего пользователя,
-			title: заголовок для сообщений,
-			reply_markup: клавиатура для reply message.
-		Returns:
-			Кортеж (Reply message, Inline messages)
-	 """
-
-	if not orders:
-		if user_role == "creator":
-			# добавим кнопку для размещения нового заказа для дизайнера
-			message_text = "❕Пока нет ни одного нового заказа."
-		elif user_role == "receiver":
-			message_text = "❕Пока нет новых заказов по вашему профилю."
-		else:
-			message_text = "❕Пока пусто."
-
-		reply_message = await message.reply_text(message_text, reply_markup=reply_markup)
-
-		return reply_message, None
-
-	if user_role == "creator":
-		subtitle = "Мои заказы"
-		order_button_text = "Показать"
-		callback_prefix = "order"
-
-	elif user_role == "viewer":
-		subtitle = "Активные заказы на бирже"
-		order_button_text = "Подробнее"
-		callback_prefix = "order"
-
-	elif user_role == "receiver":
-		subtitle = "Размещенные заказы на бирже"
-		order_button_text = ORDER_RESPOND_KEYBOARD[0]
-		callback_prefix = "respond_order"
-
-	elif user_role == "executor":
-		subtitle = "Завершенные заказы"
-		order_button_text = "Открыть"
-		callback_prefix = "order"
-
-	else:
-		return None, None
-
-	reply_message = await message.reply_text(
-		f'*{title or subtitle}:*\n',
-		reply_markup=reply_markup
-	)
-	inline_messages = []
-
-	for index, order in enumerate(orders, 1):
-		responded_user, _ = find_obj_in_list(order["responding_users"], {"id": user_id})
-		if responded_user and user_role == "receiver":
-			order_button_text = ORDER_RESPOND_KEYBOARD[1]
-
-		order_button = InlineKeyboardMarkup([[InlineKeyboardButton(
-			text=order_button_text,
-			callback_data=f'{callback_prefix}_{order["id"]}',
-		)]])
-
-		inline_message_text = format_output_text(f'{index}', order["title"]+"\n", value_tag="`", default_sep=".")
-
-		order_status, date_string = get_order_status(order)
-		if not user_role == "creator":
-			order_status = ""
-
-		if date_string:
-			inline_message_text += f'\nсрок реализации: _{date_string}_'
-
-		if order_status:
-			inline_message_text += f'\nстатус: _{order_status}_'
-
-		await show_inline_message(
-			message,
-			text=inline_message_text,
-			inline_markup=order_button,
-			inline_messages=inline_messages
-		)
-
-	return reply_message, inline_messages
-
-
 def set_priority_group(context: ContextTypes.DEFAULT_TYPE) -> int:
 	""" Выбор приоритетной группы, если пользователь относится к разным типам категорий """
+
 	user_details = context.user_data["details"]
 	user_groups = user_details.get("groups", [])
 
@@ -480,113 +442,17 @@ def set_priority_group(context: ContextTypes.DEFAULT_TYPE) -> int:
 	return group
 
 
-def get_user_rating_data(context: ContextTypes.DEFAULT_TYPE, user: dict) -> Tuple[dict, dict]:
-	""" Возвращаем вопросы для анкетирования, подробный рейтинг в виде объекта и в виде строки """
-	rating = user.get("average_rating", {})
-	group = max(user.get("groups"))
-	rating_questions = context.bot_data["rating_questions"][group - 1] if group else {}
-
-	return rating_questions, rating
-
-
 def build_inline_username_buttons(users: List[dict]) -> InlineKeyboardMarkup:
 	""" Вспомогательная функция для создания инлайн кнопок с именем пользователя и его рейтингом """
-	inline_keyboard = generate_inline_keyboard(
+	inline_keyboard = generate_inline_markup(
 		users,
 		callback_data="id",
 		item_key="username",
-		item_prefix=["⭐️", "total_rate"],
+		item_prefix=["⭐️", "total_rating"],
 		callback_data_prefix="user_"
 	)
 
 	return inline_keyboard
-
-
-async def check_required_user_group_rating(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Optional[bool]:
-	chat_data = context.chat_data
-	selected_user = chat_data.get("selected_user")
-	rating_questions = context.bot_data.get("rating_questions")
-
-	if not selected_user or not rating_questions:
-		return None
-
-	rates, _ = find_obj_in_list(chat_data["user_ratings"], {"receiver_id": selected_user["id"]})
-	group = max(selected_user["groups"])
-	questions_count = len(rating_questions[group - 1].items())
-	questions_rated_count = len(rates.items()) - 1 if rates else 0
-
-	if group == 1 and questions_rated_count < 2 or group == 2 and questions_rated_count < 6:
-		message = await message.reply_text(
-			f"*Необходимо оценить все критерии!*\n"
-			f"Отмечено: _{questions_rated_count}_ из _{questions_count}_",
-			# reply_markup=continue_menu
-		)
-		chat_data["last_message_id"] = message.message_id
-		return True
-
-	return False
-
-
-async def update_user_data(message: Message, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> Optional[dict]:
-	""" Получаем с сервера и обновляем сохраненные данные пользователя с user_id в контексте """
-	chat_data = context.chat_data
-
-	params = {"related_user": context.user_data["details"]["id"]}
-	res = await fetch_user_data(user_id, params=params)
-	supplier_data = res["data"]
-
-	if supplier_data:
-		chat_data["selected_user"] = supplier_data
-		chat_data["suppliers"].update({user_id: supplier_data})
-
-		# удалим всех поставщиков из сохраненных в cat_users
-		cat_users = chat_data.get("cat_users", {})
-		cat_ids = extract_fields(supplier_data["categories"], "id")
-		[cat_users[cat_id].clear() for cat_id in cat_ids if cat_id in cat_users]
-
-		# обновим сохраненное состояние со списком поставщиков через inline_markup в menu
-		selected_cat = chat_data.get("selected_cat", {})
-		users = await load_cat_users(message, context, selected_cat.get("id"))
-		inline_markup = build_inline_username_buttons(users)
-		if inline_markup:
-			prev_menu = chat_data["menu"][-2]
-			prev_menu["inline_markup"] = inline_markup
-
-	return supplier_data
-
-
-async def update_ratings(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Optional[List[dict]]:
-	user_id = context.user_data["details"]["user_id"]
-
-	data = context.chat_data["user_ratings"]
-	res = await fetch_user_data(user_id, "/update_ratings", data=data, method="POST")
-	if res["status_code"] == 304:
-		await yourself_rate_warning_message(message)
-
-	elif res["error"]:
-		res.setdefault("request_body", data)
-		text = "Ошибка сохранения результатов анкетирования"
-		await catch_server_error(message, context, error=res, text=text)
-
-	return res["data"]
-
-
-async def load_cat_users(message: Message, context: ContextTypes.DEFAULT_TYPE, cat_id: str) -> Optional[List[dict]]:
-	if not cat_id:
-		return None
-
-	chat_data = context.chat_data
-	cat_users = chat_data.get("cat_users", {})
-	if not cat_users.get(cat_id):
-		res = await fetch_user_data(params={"category": cat_id})
-		if res["error"]:
-			text = f'Ошибка получения списка поставщиков!'
-			await catch_server_error(message, context, error=res, text=text, reply_markup=back_menu)
-			return None
-
-		cat_users[cat_id] = res["data"]
-
-	return cat_users[cat_id]
 
 
 async def load_categories(
@@ -607,18 +473,21 @@ async def load_categories(
 			context,
 			error=res,
 			text=text,
-			reply_markup=done_menu,
 			auto_send_notification=False
 		)
 
 	return res["data"]
 
 
-async def load_users_in_category(message: Message, context: ContextTypes.DEFAULT_TYPE, cat_id: int):
+async def load_cat_users(message: Message, context: ContextTypes.DEFAULT_TYPE, cat_id: str) -> Optional[List[dict]]:
+	if not cat_id:
+		return None
+
 	res = await fetch_user_data(params={"category": cat_id})
-	if not res["data"]:
-		text = f"Ошибка загрузки пользователей для категории {cat_id} через api"
-		await catch_server_error(message, context, error=res, text=text)
+	if res["error"]:
+		text = f'Ошибка получения списка поставщиков!'
+		await catch_server_error(message, context, error=res, text=text, reply_markup=back_menu)
+		return None
 
 	return res["data"]
 
@@ -627,21 +496,21 @@ async def load_user(
 		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
 		user_id: int,
-		designer_id: Optional[int] = None,
-) -> Tuple[Optional[dict], Optional[Message]]:
-	params = {"related_user": designer_id} if designer_id is not None else {}
-	res = await fetch_user_data(user_id, params=params)
-	data: dict = res["data"]
-	reply_message = None
+		with_details: bool = False,
+) -> Optional[dict]:
 
+	params = {}
+	if with_details:
+		related_user_id = context.user_data["details"]["id"]
+		params = {"with_details": "true", "related_user": related_user_id}
+
+	res = await fetch_user_data(user_id, params=params)
+	data = res["data"]
 	if data is None:
 		text = "Ошибка чтения данных пользователя."
-		reply_message = await catch_server_error(message, context, error=res, text=text)
+		await catch_server_error(message, context, error=res, text=text)
 
-	if data:
-		data.setdefault("name", data["username"])
-
-	return data, reply_message
+	return data
 
 
 async def load_regions(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[list], Optional[list]]:
@@ -684,8 +553,9 @@ async def load_orders(
 		await catch_server_error(message, context, error=res, text=text)
 
 	# сохраним в памяти полученные с сервера заказы в виде объектов с ключом order.id
-	elif data and isinstance(data, list):
-		chat_data["orders"] = {item["id"]: item for item in data}
+	elif data:
+		if isinstance(data, list):
+			chat_data["orders"] = {item["id"]: item for item in data}
 
 	return data
 
@@ -693,45 +563,34 @@ async def load_orders(
 async def update_order(
 		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
-		order_id: int,
+		order_id: Union[int, str] = None,
 		params: dict = None,
-		data: dict = None
+		data: dict = None,
+		method: Literal["POST", "DELETE"] = "POST"
 ) -> Optional[dict]:
-	res = await fetch_data(f'/orders/{order_id}', params=params, data=data, method="POST")
-	if res["error"]:
+	res = await fetch_data(
+		f'/orders/{"create" if not order_id and method == "POST" else order_id}',
+		params=params,
+		data=data,
+		method=method
+	)
+
+	if res["error"] is not None:
 		res.setdefault("request_body", data)
-		text = f'Ошибка обновления данных заказа (ID:{order_id})'
+		if order_id:
+			text = f'Ошибка {"обновления" if method == "POST" else "удаления"} заказа (ID:{order_id})!'
+		else:
+			text = 'Ошибка создания нового заказа!'
+
 		await catch_server_error(message, context, error=res, text=text)
 		return None
 
-	context.chat_data["orders"][order_id] = res["data"]
-
-	return res["data"]
-
-
-async def load_rating_questions(
-		message: Message,
-		context: ContextTypes.DEFAULT_TYPE,
-) -> Tuple[Optional[list], str]:
-	res = await fetch_data("/rating/questions/")
-	if not res["data"]:
-		text = "Ошибка загрузки вопросов для рейтинга"
-		await catch_server_error(
-			message,
-			context,
-			error=res,
-			text=text,
-			reply_markup=done_menu,
-			auto_send_notification=False
-		)
-	return res["data"]
-
-
-async def load_rating_authors(message: Message, context: ContextTypes.DEFAULT_TYPE, receiver_id: int) -> list:
-	res = await fetch_data(f"/rating/{receiver_id}/authors/")
-	if res["status_code"] != 200:
-		text = "Ошибка загрузки списка голосовавших"
-		await catch_server_error(message, context, error=res, text=text)
+	orders = context.chat_data.setdefault("orders", {})
+	if method == "DELETE":
+		orders.pop(order_id, None)  # удалим заказ из сохраненных данных
+	else:
+		_id = res["data"]["id"]
+		orders[_id] = res["data"]  # обновим заказ в сохраненных данных
 
 	return res["data"]
 
@@ -749,33 +608,273 @@ async def load_user_field_names(
 	return res["data"]
 
 
-def rates_to_string(rates: dict, questions: dict, rate_value: int = 8) -> str:
-	if not rates or not questions:
-		return ""
+async def load_favourites(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Tuple[List[dict], str]:
+	user_details = context.user_data["details"]
 
-	result = ""
-	for key, val in rates.items():
-		if val is None:
-			continue
+	res = await fetch_user_data(user_details["user_id"], '/favourites', method="GET")
+	if res["error"]:
+		text = f'Ошибка получения списка Избранное!'
+		await send_error_to_admin(message, context, error=res, text=text)
+		return None, text
 
-		name = questions.get(key)
-		if not name:
-			continue
+	return res["data"], None
 
-		rate = min(round(val), rate_value)
-		level = rate / rate_value
 
-		if level > 0.7:
-			symbol = "🟩"
-		elif level >= 0.5:
-			symbol = "🟨"
+async def update_favourites(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		user_id: int,
+		method: Literal["POST", "DELETE"] = "POST"
+) -> Tuple[List[dict], str]:
+	user_details = context.user_data["details"]
+
+	res = await fetch_user_data(user_details["user_id"], f'/favourites/{user_id}', method=method)
+
+	if res["error"]:
+		text = "Ошибка обновления списка Избранное" if method == "POST" else "Ошибка удаления пользователя из Избранное"
+		await send_error_to_admin(message, context, error=res, text=text)
+		return None, text
+
+	return res["data"], None
+
+
+async def update_category_list_callback(
+		update: Update,
+		context: ContextTypes.DEFAULT_TYPE,
+		cats_key_name: Literal["categories", "outsourcer_categories"] = "outsourcer_categories"
+) -> None:
+	# Обработчик нажатий на inline кнопки выбора категорий
+	query = update.callback_query
+
+	await query.answer()
+	cat_id = query.data.lstrip("category_")
+
+	categories = context.chat_data.get(cats_key_name, [])
+	local_data = context.chat_data.setdefault("local_data", {})
+	selected_categories = local_data.setdefault("selected_categories", {})
+
+	await delete_messages_by_key(context, "warn_message_id")
+
+	# Добавим или удалим найденную категорию
+	active_category, _ = find_obj_in_list(categories, {"id": int(cat_id)})
+	if not active_category:
+		return
+
+	if selected_categories.get(cat_id):
+		del selected_categories[cat_id]
+	else:
+		selected_categories[cat_id] = {
+			"name": active_category["name"],
+			"group": active_category["group"]
+		}
+
+	keyboard = query.message.reply_markup.inline_keyboard
+	updated_keyboard = update_inline_keyboard(keyboard, active_value=query.data, button_type="checkbox")
+	await query.edit_message_reply_markup(updated_keyboard)
+
+
+async def select_supplier_segment(message: Message, context: ContextTypes.DEFAULT_TYPE, user: dict) -> None:
+	""" Функция вывода сообщения с предложением выставить сегмент поставщика """
+
+	temp_messages = context.chat_data.setdefault("temp_messages", {})
+
+	# если выбранный поставщик еще лично не зарегистрирован в боте и не имеет ранее выбранного кем-то сегмента
+	if not Group.has_role(user, Group.SUPPLIER) or user["user_id"] or not user["segment"] is None:
+		return
+
+	inline_markup = generate_inline_markup(
+		SEGMENT_KEYBOARD,
+		callback_data_prefix=f'user_{user["id"]}__segment_',
+		vertical=True
+	)
+
+	_message = await message.reply_text(
+		f'🎯 *Сегмент еще не установлен!*\n'
+		f'Подскажите, если работали с этим поставщиком.',
+		reply_markup=inline_markup
+	)
+	temp_messages["user_segment"] = _message.message_id
+
+
+def order_has_approved_executor(order: dict) -> bool:
+	""" Вернет истина, если претендент отсутствует в списке откликнувшихся на заказ responded_users """
+	if not order["executor"]:
+		return False
+
+	responded_user, _ = find_obj_in_list(order["responded_users"], {"id": order["executor"]})
+	return not bool(responded_user)
+
+
+def get_order_status(order: dict) -> Tuple[str, str]:
+	"""
+	Получение статуса заказа в виде строки
+	Returns:
+		Tuple (статус, дата выполнения заказа)
+	"""
+	date_string, expire_date, current_date = get_formatted_date(order["expire_date"])
+	is_valid = not expire_date or current_date <= expire_date
+
+	if order["status"] == 0:
+		order_status = ORDER_STATUS[0]
+	elif order["status"] == 1:
+		if not is_valid:
+			order_status = ORDER_STATUS[4]
+		elif order["executor"]:
+			order_status = ORDER_STATUS[int(order_has_approved_executor(order) + 2)]
 		else:
-			symbol = "🟧️"
+			order_status = ORDER_STATUS[1]
+	elif order["status"] == 2:
+		order_status = ORDER_STATUS[5]
+	elif order["status"] == 3:
+		order_status = ORDER_STATUS[6]
+	else:
+		order_status = ORDER_STATUS[7]
 
-		empty_rate = "⬜" * (rate_value - rate)
-		result += f"{name} ({rate}/{rate_value}):\n{symbol * rate}{empty_rate}\n"
+	return order_status, date_string
 
-	return result
+
+async def show_user_orders(
+		message: Message,
+		orders: list,
+		user_role: Literal["creator", "contender", "executor"],
+		user_id: int = None,
+		title: str = None,
+		reply_markup: ReplyKeyboardMarkup = back_menu
+) -> list:
+	""" Вывод на экран списка заказов пользователя по его id:
+		Args:
+			message: объект с сообщением,
+			orders: заказы дизайнера,
+			user_role: флаг указывающий на текущую роль пользователя,
+			user_id: id текущего пользователя,
+			title: заголовок для сообщений,
+			reply_markup: клавиатура для reply message.
+		Returns:
+			массив Message сообщений
+	 """
+
+	messages = []
+	callback_prefix = "order_"
+
+	if title:
+		reply_message = await message.reply_text(f'*{title.upper()}*\n', reply_markup=reply_markup)
+		messages.append(reply_message)
+
+	if not orders:
+		message_text = NO_ORDERS_MESSAGE_TEXT.get(user_role, "❕Пока пусто.")
+		reply_message = await message.reply_text(message_text, reply_markup=reply_markup)
+		messages.append(reply_message)
+
+		if user_role == "creator":
+			inline_message = await place_new_order_message(message)
+			messages.append(inline_message)
+
+		return messages
+
+	elif not user_role:
+		return messages
+
+	for index, order in enumerate(orders, 1):
+		order_has_executor = order_has_approved_executor(order)
+		responded_user_counter = ""
+		order_button_text = ORDER_RESPOND_KEYBOARD[3]
+
+		if user_role == "creator":
+			order_button_text = ORDER_RESPOND_KEYBOARD[4]
+			if order["status"] == 2:
+				order_button_text = ORDER_RESPOND_KEYBOARD[5]
+
+			if order["status"] < 2 and order["responded_users"] and not order_has_executor:
+				responded_user_counter = f' ({len(order["responded_users"])})'
+
+		elif order["executor"] == user_id and not order_has_executor:
+			order_button_text = ORDER_RESPOND_KEYBOARD[2]
+
+		inline_markup = generate_inline_markup(
+			[order_button_text + responded_user_counter],
+			callback_data=[order["id"]],
+			callback_data_prefix=callback_prefix
+		)
+
+		inline_message_text = format_output_text(f'{index}', order["title"] + "\n", value_tag="`", default_sep=".")
+
+		order_status, date_string = get_order_status(order)
+		if not user_role == "creator":
+			order_status = ""
+			inline_message_text += f'\nЗаказчик: _{order["owner_name"]}_'
+
+		if order_has_executor and order["executor"] != user_id:
+			executor = order.get("executor_name")
+			if executor:
+				inline_message_text += f'\nИсполнитель: _{executor}_'
+
+		order_price = f'{order["price"]}₽' if order["price"] else "по договоренности"
+		inline_message_text += f'\nСтоимость работ: _{order_price}_'
+
+		if date_string:
+			inline_message_text += f'\nСрок реализации: _{date_string}_'
+
+		if order_status:
+			inline_message_text += f'\nСтатус: _{order_status}_'
+
+		if user_role == "contender" and order["responded_users"] and not order["executor"] == user_id:
+			inline_message_text += f'\nОткликнулось на заявку: _{len(order["responded_users"]) or "0"}_'
+
+		inline_message = await message.reply_text(inline_message_text, reply_markup=inline_markup)
+		messages.append(inline_message)
+
+	if user_role == "creator":
+		inline_message = await place_new_order_message(message)
+		messages.append(inline_message)
+
+	return messages
+
+
+async def show_order_related_users(message: Message, context: ContextTypes.DEFAULT_TYPE, order: dict) -> List[Message]:
+	""" Вывод данных претендентов на заказ или исполнителя с inline кнопками управления """
+
+	executor_id = order["executor"]
+	users = order["responded_users"]
+
+	if not executor_id and not users:
+		return []
+
+	order_has_executor = order_has_approved_executor(order)
+	selected_postfix = ""
+	inline_messages = []
+
+	# если пользователь был выбран дизайнером
+	if executor_id:
+		if order_has_executor:  # если подтвержденный исполнитель
+			executor = await load_user(message, context, user_id=executor_id)
+			if executor:
+				users = [executor]
+
+		else:
+			selected_postfix = "__is_selected"
+
+	# изменим заголовок списка претендентов или исполнителя
+	_message = await message.reply_text(f'_{ORDER_RELATED_USERS_TITLE[int(order_has_executor)]}:_')
+	inline_messages.append(_message)
+
+	for user in users:
+		buttons = [InlineKeyboardButton(ORDER_EXECUTOR_KEYBOARD[0], callback_data=f'user_{user["id"]}')]
+		if order["status"] == 1 and not order_has_executor:
+			user_is_contender = user["id"] == executor_id
+			if not executor_id or user_is_contender:
+				buttons.append(InlineKeyboardButton(
+					ORDER_EXECUTOR_KEYBOARD[int(user_is_contender) + 1],
+					callback_data=f'order_{order["id"]}__executor_{user["id"]}{selected_postfix}'
+				))
+
+		_message = await message.reply_text(
+			f'*{user["name"]}*'
+			f'{format_output_text("рейтинг", "⭐️" + str(user["total_rating"]) if user["total_rating"] else "отсутствует")}',
+			reply_markup=InlineKeyboardMarkup([buttons])
+		)
+		inline_messages.append(_message)
+
+	return inline_messages
 
 
 async def is_user_chat_member(bot: Bot, user_id: int, chat_id: Union[str, int]) -> bool:
@@ -810,7 +909,7 @@ async def invite_user_to_chat(
 	is_member = await is_user_chat_member(bot, user_id, chat_id=chat_id)
 	if not is_member:
 		join_link = await bot.export_chat_invite_link(chat_id=chat_id)
-		join_button = generate_inline_keyboard(
+		join_button = generate_inline_markup(
 			[f'Присоединиться к {chat_variant_text}'],
 			url=join_link,
 		)
@@ -888,7 +987,7 @@ async def catch_server_error(
 	if auto_send_notification:
 		await send_error_to_admin(message, context, error=error_data, text=error_title)
 		error_text = "Администратор уже проинформирован о Вашей проблеме.\nПопробуйте повторить или зайдите позже."
-		markup = generate_inline_keyboard(["Отправить"], callback_data="send_error")
+		markup = generate_inline_markup(["Отправить"], callback_data="send_error")
 
 	else:
 		error_text = "Просьба поделиться проблемой с администратором Консьерж Сервис."
@@ -919,11 +1018,13 @@ async def send_error_to_admin(
 	})
 
 	chat_data = context.chat_data
+	section = get_section(context)
 	error_data = {
 		"chat_id": chat_data["chat_id"],
 		"bot_status": chat_data["status"],
-		"current_state": chat_data["menu"][-1]["state"],
-		"reply_message": chat_data["menu"][-1]["message"].text,
+		"state": section["state"],
+		"query_message": section.get("query_message", None),
+		"callback": section.get("callback", None),
 	}
 	error_data.update(error)
 

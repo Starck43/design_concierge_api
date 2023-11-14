@@ -6,7 +6,7 @@ from bot.bot_settings import ADMIN_CHAT_ID
 from bot.constants.messages import check_file_size_message
 from bot.handlers.common import delete_messages_by_key
 from bot.logger import log
-from bot.utils import generate_inline_keyboard, fetch_user_data
+from bot.utils import generate_inline_markup, fetch_user_data
 
 
 async def share_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -33,7 +33,7 @@ async def share_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
 		chat_data["last_message_id"] = message.message_id
 		return
 
-	button = generate_inline_keyboard(
+	button = generate_inline_markup(
 		["Отправить файлы"],
 		callback_data="upload_files",
 	)
@@ -97,7 +97,7 @@ async def upload_files_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	else:
 		log.info(f'Failed to upload files on server for user {user.full_name} (ID:{user.id})')
 
-		button = generate_inline_keyboard(
+		button = generate_inline_markup(
 			["Написать администратору"],
 			callback_data="message_for_admin",
 		)

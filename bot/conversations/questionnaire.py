@@ -11,13 +11,14 @@ from bot.constants.messages import offer_for_questionnaire_message
 from bot.constants.patterns import DONE_PATTERN, CONTINUE_PATTERN, CANCEL_PATTERN, START_QUESTIONNAIRE_PATTERN, \
 	REPEAT_QUESTIONNAIRE_PATTERN
 from bot.handlers.common import user_authorization, create_questionnaire_link
+from bot.handlers.rating import select_rate_callback
 from bot.handlers.done import done
 from bot.handlers.questionnaire import (
-	select_users_callback, set_user_rating_callback, confirm_cancel_questionnaire_callback, continue_questionnaire,
+	select_users_callback, confirm_action_callback, continue_questionnaire,
 	cancel_questionnaire, start_questionnaire
 )
 from bot.states.questionnaire import QuestState
-from bot.utils import generate_reply_keyboard
+from bot.utils import generate_reply_markup
 
 
 async def questionnaire_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
@@ -46,7 +47,7 @@ async def questionnaire_conversation(update: Update, context: ContextTypes.DEFAU
 		await create_questionnaire_link(update.message, context)
 		return ConversationHandler.END
 
-	reply_markup = generate_reply_keyboard([START_QUESTIONNAIRE_KEYBOARD, DONE_KEYBOARD])
+	reply_markup = generate_reply_markup([START_QUESTIONNAIRE_KEYBOARD, DONE_KEYBOARD])
 	saved_message: Message = chat_data.get("saved_message")
 	if saved_message:
 		await saved_message.edit_reply_markup(None)
@@ -108,11 +109,11 @@ questionnaire_dialog = ConversationHandler(
 			continue_questionnaire_handler,
 		],
 		QuestState.CHECK_RATES: [
-			CallbackQueryHandler(set_user_rating_callback, pattern="^rate"),
+			CallbackQueryHandler(select_rate_callback, pattern="^rate"),
 			continue_questionnaire_handler,
 		],
 		QuestState.CANCEL_QUESTIONNAIRE: [
-			CallbackQueryHandler(confirm_cancel_questionnaire_callback),
+			CallbackQueryHandler(confirm_action_callback),
 		],
 		QuestState.DONE: [
 			done_handler,

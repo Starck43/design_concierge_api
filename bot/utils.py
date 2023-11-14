@@ -16,6 +16,7 @@ from telegram.ext import CommandHandler, filters, CallbackContext
 
 from bot.bot_settings import SERVER_URL
 from bot.constants.api import OPENSTREETMAP_GEOCODE_URL
+from bot.constants.static import RATE_BUTTONS
 from bot.logger import log
 
 
@@ -93,11 +94,11 @@ def build_menu(
 	return menu
 
 
-def generate_reply_keyboard(
+def generate_reply_markup(
 		data: Union[List[str], List[List[str]], List[Dict[str, Any]], None],
 		resize_keyboard: bool = True,
 		one_time_keyboard: bool = True,
-		is_persistent: bool = False,
+		is_persistent: bool = True,
 		share_location: bool = False,
 		share_contact: bool = False,
 		**kwargs
@@ -142,7 +143,7 @@ def generate_reply_keyboard(
 
 
 # TODO: Обработать исключение для callback_data = [], когда его длина не совпадает с общим количеством строк в data
-def generate_inline_keyboard(
+def generate_inline_markup(
 		data: Union[List[str], List[List[str]], List[Dict[str, Any]], str],
 		item_key: Optional[str] = None,
 		item_prefix: Optional[Union[str, List[str]]] = "",
@@ -178,9 +179,12 @@ def generate_inline_keyboard(
 	if isinstance(data, str):
 		data = [data]
 
-	if isinstance(callback_data, str):
-		callback_data = [callback_data] * len(flatten_list(data) if isinstance(data[0], list) else data)
-	elif isinstance(callback_data, list):
+	if isinstance(callback_data, str) and callback_data:
+		callback_data = [callback_data]
+		flatten_data = flatten_list(data)
+		if len(flatten_data) != len(callback_data):
+			callback_data = callback_data * len(flatten_data if isinstance(data[0], list) else data)
+	elif isinstance(callback_data, list) and callback_data:
 		callback_data = flatten_list(callback_data)
 	else:
 		callback_data = [str(i) for i in range(len(flatten_list(data)))]
@@ -254,7 +258,10 @@ def update_inline_keyboard(
 		active_value: str,
 		button_type: str = "radiobutton",
 ) -> InlineKeyboardMarkup:
-	""" Update an inline keyboard, checking an active button in button list. Button types: radiobutton, checkbox, rate """
+	"""
+	Update an inline keyboard, checking an active button in button list.
+	Button types: radiobutton, checkbox, rate
+	"""
 
 	new_inline_keyboard = []
 
@@ -265,17 +272,21 @@ def update_inline_keyboard(
 			if button_type == 'rate':
 				rate = int(active_value)
 				level = rate / rate_value
-				if int(button.callback_data[-1]) <= rate:
-					if level > 0.7:
-						symbol = "🟩"
-					elif level >= 0.5:
-						symbol = "🟨"
-					else:
-						symbol = "🟧️"
-					new_button = InlineKeyboardButton(symbol, callback_data=button.callback_data)
-				else:
-					symbol = "⬜️️️"
-					new_button = InlineKeyboardButton(symbol, callback_data=button.callback_data)
+				try:
+					symbol = RATE_BUTTONS[3]
+					if int(button.callback_data[-1]) <= rate:
+						if level > RATE_BUTTONS[0][1]:
+							symbol = RATE_BUTTONS[0][0]
+						elif level > RATE_BUTTONS[1][1]:
+							symbol = RATE_BUTTONS[1][0]
+						else:
+							symbol = RATE_BUTTONS[2]
+
+				except ValueError:
+					symbol = button.text
+
+				new_button = InlineKeyboardButton(symbol, callback_data=button.callback_data)
+
 			else:
 				if button.callback_data == active_value:
 					if button_type == 'checkbox':
@@ -355,6 +366,30 @@ def get_formatted_date(date: str, format_pattern: str = "%d.%m.%Y") -> tuple:
 	return date_string, date_object, current_date
 
 
+def validate_date(date_text: str, format_pattern: str = "%d.%m.%Y") -> Optional[tuple]:
+	try:
+		# Замена символов "/" и "-" на точку
+		date_text = re.sub(r'[\s/-]+', '.', date_text.strip())
+
+		# Проверка формата даты и преобразование в объект datetime
+		date_obj = datetime.strptime(date_text, format_pattern)
+
+		formatted_date = date_obj.strftime("%Y-%m-%d")  # Формат даты для сохранения в таблице
+		return date_text, formatted_date
+
+	except ValueError:
+		return None
+
+
+def validate_number(text: str) -> Optional[int]:
+	pattern = r'^\D*?(\d+)\D*?$'  # Регулярное выражение для отсечения нечисловых символов
+	match = re.match(pattern, text)
+	if match:
+		return int(match.group(1))
+	else:
+		return None
+
+
 def is_emoji(character: str) -> bool:
 	return unicodedata.category(character) == "So"
 
@@ -414,7 +449,12 @@ def extract_fields(data: List[dict], field_names: Union[str, List[str]]) -> List
 	return result
 
 
-def data_list_to_string(data: List[dict], field_names: Union[str, List[str]], separator: str = "\n") -> str:
+def data_list_to_string(
+		data: List[dict],
+		field_names: Union[str, List[str]],
+		separator: str = "\n",
+		prefix: str = ""
+) -> str:
 	"""
 		Converts a list of dictionaries into a string with specific fields formatted as desired.
 		:param data: A list of dictionaries to extract values from.
@@ -431,13 +471,14 @@ def data_list_to_string(data: List[dict], field_names: Union[str, List[str]], se
 		return ""
 
 	if isinstance(result_list[0], str):
-		return separator.join(result_list)
+		return prefix + f'{separator}{prefix}'.join(result_list)
 
 	result = ""
 	for fields in result_list:
-		line = str(fields[0])
-		if len(fields) > 1:
-			line += f": {' '.join(map(str, fields[1:]))}"
+		line = prefix + str(fields.pop(0))
+		print(line)
+		if len(fields) > 0:
+			line += f": {' '.join(map(str, fields))}"
 		result += line + separator
 
 	return result.rstrip(separator)
@@ -479,7 +520,7 @@ def format_output_link(caption: str = '', link_text: str = '', src: str = '', li
 	return format_output_text(caption, url, default_sep=" ")
 
 
-def find_obj_in_dict(list_dict: list, params: Dict[str, Any], condition: str = "AND"):
+def find_obj_in_dict(list_dict: List[dict], params: Dict[str, Any], condition: str = "AND") -> dict:
 	"""
 	Finds an object within a list of dictionaries based on specified keys and values, using the specified condition.
 	Args:
@@ -488,7 +529,7 @@ def find_obj_in_dict(list_dict: list, params: Dict[str, Any], condition: str = "
 		condition: The condition to use for matching. Possible values are "AND" (default) or "OR".
 
 	Returns:
-		The first dictionary that matches the specified keys and values using the specified condition, or None if no match is found.
+		The first dictionary that matches the specified keys and values using the specified condition.
 	"""
 
 	for elem in list_dict:
@@ -499,13 +540,15 @@ def find_obj_in_dict(list_dict: list, params: Dict[str, Any], condition: str = "
 			elif condition == "OR":
 				if any(elem.get(key) == value for key, value in params.items() if value is not None):
 					return elem
-	return None
+	return {}
 
 
-def find_obj_in_list(arr: List[Dict[str, Any]], search_params: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
-	if search_params is None:
+# TODO: объединить с find_obj_in_dict
+def find_obj_in_list(list_dict: List[dict], search_params: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+	if not search_params:
 		return {}, -1
-	for i, obj in enumerate(arr):
+
+	for i, obj in enumerate(list_dict):
 		if all(obj.get(key) == value for key, value in search_params.items()):
 			return obj, i
 
@@ -549,12 +592,19 @@ def get_key_values(arr: list, key: str) -> List[str]:
 
 
 def update_text_by_keyword(text: str, keyword: str, replacement: str) -> str:
+	""" Substitute some string in the given text with the replacement by the keyword """
+	is_replaced = False
 	lines = text.split("\n")
 	for i in range(len(lines)):
 		if keyword in lines[i]:
 			lines[i] = replacement
-	new_text = "\n".join(lines)
-	return new_text
+			is_replaced = True
+
+	if is_replaced:
+		new_text = "\n".join(lines)
+		return new_text
+
+	return text
 
 
 def dict_to_formatted_text(data: dict, indent: int = 2) -> str:
@@ -618,11 +668,30 @@ def format_phone_number(number: str) -> Optional[str]:
 
 
 def remove_special_chars(s: str, code_alias: str = "866") -> str:
-	return s.encode(code_alias, 'ignore').decode(code_alias).strip()
+	"""
+	Removes special characters from a string.
+	:param s: The string from which to remove special characters.
+	:param code_alias: The code alias for encoding. Defaults to "866".
+	:return: The string without special characters.
+	"""
+	if not s:
+		return ""
+
+	return str(s).encode(code_alias, 'ignore').decode(code_alias).strip()
 
 
-def match_message_text(pattern: Union[str, Pattern[str]], message_text: str) -> bool:
-	return bool(re.search(remove_special_chars(pattern), remove_special_chars(message_text), re.I))
+def match_query(substring: any, text: str) -> bool:
+	"""
+	Checks if the text contains the given substring.
+	:param substring: The substring to find in the text.
+	:param text: The text in which to find the substring.
+	:return: True if the text contains the substring, False otherwise.
+	"""
+	pattern = remove_special_chars(substring) if isinstance(substring, str) else str(substring)
+	if not substring or not text:
+		return False
+
+	return bool(re.search(pattern, text, re.I))
 
 
 def flatten_list(
@@ -850,9 +919,12 @@ async def fetch(url, headers=None, params=None, data=None, method='GET', timeout
 		try:
 			async with session.request(method, url, headers=headers, params=params, json=data) as response:
 				response.raise_for_status()
-				json = await response.json()
 				headers = response.headers
 				status: int = response.status
+				if response.content_type == "application/json":
+					json = await response.json()
+				else:
+					json = await response.text()
 
 				return json, status, None, headers
 
@@ -866,7 +938,7 @@ async def fetch(url, headers=None, params=None, data=None, method='GET', timeout
 		except aiohttp.ClientResponseError as error:
 			print(f"HTTP error occurred: {error}")
 			error_code = error.status
-			error_message = error.message
+			error_message = f'{error.message} (content type: {response.content_type})'
 
 		except aiohttp.ServerTimeoutError as error:
 			print(f"Server timeout error occurred: {error}")
@@ -887,7 +959,7 @@ async def fetch_user_data(
 		params: dict = None,
 		method: str = "GET",
 		headers: dict = None,
-		data: dict = None
+		data: any = None
 ):
 	url = SERVER_URL or "http://localhost:8000"
 	api_url = replace_double_slashes("{}/api/users/{}/{}/".format(url, str(user_id), endpoint))
@@ -911,7 +983,7 @@ async def fetch_user_data(
 
 async def fetch_data(endpoint: str, params: dict = None, data: dict = None, method: str = "GET"):
 	url = SERVER_URL or "http://localhost:8000"
-	api_url = replace_double_slashes(f"{url}/api/{endpoint}/")
+	api_url = replace_double_slashes(f'{url}/api/{endpoint.replace("None", "")}/')
 	response = await fetch(api_url, params=params, data=data, method=method)
 	data, status_code, error, _ = response
 	if params is not None:
@@ -922,7 +994,7 @@ async def fetch_data(endpoint: str, params: dict = None, data: dict = None, meth
 			'data': [],
 			'status_code': status_code,
 			'error': error,
-			'url': api_url
+			'url': f'{api_url} ({method})'
 		}
 
 	return {

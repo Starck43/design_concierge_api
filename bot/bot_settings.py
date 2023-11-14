@@ -9,7 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
 env.read_env(path.join(BASE_DIR, 'bot.env'))
 
-# bot definition
+# bot definitions
 SERVER_URL = env.str('SERVER_URL')
 BOT_TOKEN = env.str('TOKEN')
 CHANNEL_ID = env.str('CHANNEL_ID')

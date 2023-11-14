@@ -2,7 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot.bot_settings import CHANNEL_ID
-from bot.constants.common import HELP_CONTEXT
+from bot.constants.static import HELP_CONTEXT
 from bot.constants.menus import main_menu, done_menu
 from bot.handlers.common import is_user_chat_member
 

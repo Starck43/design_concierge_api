@@ -8,40 +8,43 @@ from telegram.ext import (
 )
 
 from bot.bot_settings import CHANNEL_ID
-from bot.constants.menus import main_menu, start_menu
+from bot.constants.menus import start_menu
 from bot.constants.messages import denied_access_message, share_files_message
 from bot.constants.patterns import (
-	START_PATTERN, DONE_PATTERN, BACK_PATTERN, PROFILE_PATTERN, USER_PROFILE_PATTERN, COOPERATION_REQUESTS_PATTERN,
-	DESIGNER_PATTERN, USER_DETAILS_PATTERN, SUPPLIERS_SEARCH_PATTERN, SERVICES_PATTERN, DONE_ORDERS_PATTERN
+	START_PATTERN, DONE_PATTERN, BACK_PATTERN, PROFILE_PATTERN, COOPERATION_REQUESTS_PATTERN,
+	DESIGNER_PATTERN, SUPPLIERS_SEARCH_PATTERN
 )
 from bot.handlers.common import (
-	go_back, init_start_menu, user_authorization, load_rating_questions, load_user_field_names, set_priority_group,
-	invite_user_to_chat, is_user_chat_member
+	init_start_section, user_authorization, load_user_field_names, set_priority_group,
+	invite_user_to_chat, is_user_chat_member, go_back_section, update_category_list_callback, delete_messages_by_key
 )
 from bot.handlers.cooperation import cooperation_requests, coop_request_message_callback
-from bot.handlers.details import show_authors_for_user_rating_callback
 from bot.handlers.done import done
 from bot.handlers.main import (
 	main_menu_choice, select_suppliers_in_cat_callback, show_user_details_callback, user_details_choice,
-	select_events_callback, select_sandbox_callback, place_designer_order_callback, select_supplier_segment_callback,
-	save_supplier_rating_callback, select_outsourcers_in_cat_callback, suppliers_search_choice,
-	recommend_new_user_callback, orders_group_choice, show_order_details_callback,
-	select_order_executor_callback, respond_designer_order_callback, change_order_status_callback,
-	designer_orders_group_choice
+	select_events_callback, select_sandbox_callback, new_order_callback, change_supplier_segment_callback,
+	select_outsourcers_in_cat_callback, suppliers_search_choice,
+	recommend_new_user_callback, services_choice, show_order_details_callback,
+	select_order_executor_callback, designer_orders_choice, manage_order_callback, remove_order_callback,
+	modify_order_callback, modify_order_fields_choice, add_order_fields_choice
 )
 from bot.handlers.profile import (
-	profile, edit_user_details_callback, edit_details_fields_callback, profile_options_choice, choose_tariff_callback
+	profile, edit_user_details_callback, modify_user_data_fields_callback, profile_options_choice, choose_tariff_callback
 )
-from bot.handlers.questionnaire import set_user_rating_callback
+from bot.handlers.rating import select_rate_callback, answer_rating_questions_callback, \
+	change_rating_callback, show_voted_designers_callback
 from bot.handlers.upload import upload_files_callback, share_files_callback, share_files
 from bot.logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
-from bot.utils import determine_greeting, generate_inline_keyboard
+from bot.utils import determine_greeting, generate_inline_markup
 
 
 async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	"""Начало диалога по команде /start или сообщении start"""
+
+	await delete_messages_by_key(context, "last_message_id")
+	await delete_messages_by_key(context, "last_message_ids")
 
 	# Проверим, зарегистрирован ли пользователь
 	has_authorized = await user_authorization(update, context)
@@ -50,18 +53,19 @@ async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 	elif not has_authorized:
 		return ConversationHandler.END
 
-	user = update.effective_user
-	user_data = context.user_data
-	context.bot_data.setdefault("rating_questions", await load_rating_questions(update.message, context))
+	# TODO: переместить логику сохранения user_field_names в саму функцию load_user_field_names
 	context.bot_data.setdefault("user_field_names", await load_user_field_names(update.message, context))
-	user_has_rating = user_data["details"].get("has_given_rating")
+
+	user_data = context.user_data
+	user_is_rated = user_data["details"].get("is_rated")
 
 	chat_data = context.chat_data
 	chat_data["chat_id"] = update.effective_chat.id
+	user = update.effective_user
 	message_text = None
-	is_channel_member = await is_user_chat_member(context.bot, user_id=user.id, chat_id=CHANNEL_ID)
 
-	group = set_priority_group(context)
+	set_priority_group(context)  # установим основную группу пользователя (дизайнер или поставщик) и сохраним ее
+	is_channel_member = await is_user_chat_member(context.bot, user_id=user.id, chat_id=CHANNEL_ID)
 
 	if user_data["details"].get("access", -2) == -2:
 		log.info(f"Access denied for user {user.full_name} (ID:{user.id}).")
@@ -85,12 +89,12 @@ async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 			message_text = "⚠️ Доступ к Консьерж Сервис временно ограничен\\!\n"
 
 		# если пользователь не поставщик и не выставлял вообще рейтинг ни разу, то вывести приглашение об анкетировании
-		if not user_has_rating and user_data["priority_group"] in [Group.DESIGNER, Group.OUTSOURCER]:
-			questionnaire_button = generate_inline_keyboard(
+		if not user_is_rated and user_data["priority_group"] in [Group.DESIGNER, Group.OUTSOURCER]:
+			questionnaire_button = generate_inline_markup(
 				["Перейти к анкетированию"],
 				callback_data="questionnaire"
 			)
-			context.chat_data["saved_message"] = await update.message.reply_text(
+			await update.message.reply_text(
 				"Для составления рейтинга поставщиков рекомендуем пройти анкетирование.",
 				reply_markup=questionnaire_button
 			)
@@ -106,52 +110,22 @@ async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 			return ConversationHandler.END
 
 	log.info(f"User {user.full_name} (ID:{user.id}) started conversation.")
-	menu = await init_start_menu(context, text=message_text, menu_markup=main_menu[group])
+	menu = await init_start_section(context, state=MenuState.START, text=message_text)
 
 	if message_text:
 		await share_files_message(
 			update.message,
 			"❗️_Для получения полного доступа к функционалу "
-			"не забудьте приложить сюда любые документы "
-			"для подтверждения Вас как дизайнера или архитектора_"
+			"необходимо поделиться любыми документами или фото, "
+			"подтверждающими выбранный вид деятельности_"
 		)
 
 	return menu["state"]
 
 
-done_handler = MessageHandler(
-	filters.TEXT & filters.Regex(re.compile(DONE_PATTERN, re.I)),
-	done
-)
-
-back_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(BACK_PATTERN, re.I)),
-	go_back
-)
-
 main_menu_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(DESIGNER_PATTERN, re.I)),
+	filters.TEXT & ~filters.COMMAND,
 	main_menu_choice
-)
-
-user_details_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(USER_DETAILS_PATTERN, re.I)),
-	user_details_choice
-)
-
-orders_group_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(SERVICES_PATTERN, re.I)),
-	orders_group_choice
-)
-
-designer_orders_group_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(DONE_ORDERS_PATTERN, re.I)),
-	designer_orders_group_choice
-)
-
-suppliers_search_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(SUPPLIERS_SEARCH_PATTERN, re.I)),
-	suppliers_search_choice
 )
 
 profile_handler = MessageHandler(
@@ -159,14 +133,44 @@ profile_handler = MessageHandler(
 	profile
 )
 
+services_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND,
+	services_choice
+)
+
+profile_options_choice_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND,
+	profile_options_choice
+)
+
+user_details_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND,
+	user_details_choice
+)
+
+designer_orders_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND,
+	designer_orders_choice
+)
+
+suppliers_search_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(SUPPLIERS_SEARCH_PATTERN, re.I)),
+	suppliers_search_choice
+)
+
 cooperation_requests_handler = MessageHandler(
 	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(COOPERATION_REQUESTS_PATTERN, re.I)),
 	cooperation_requests
 )
 
-profile_options_choice_handler = MessageHandler(
-	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(USER_PROFILE_PATTERN, re.I)),
-	profile_options_choice
+back_handler = MessageHandler(
+	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(BACK_PATTERN, re.I)),
+	go_back_section
+)
+
+done_handler = MessageHandler(
+	filters.TEXT & filters.Regex(re.compile(DONE_PATTERN, re.I)),
+	done
 )
 
 main_dialog = ConversationHandler(
@@ -181,40 +185,61 @@ main_dialog = ConversationHandler(
 	states={
 		MenuState.START: [
 			done_handler,
-			main_menu_handler,
-			# cooperation_requests_handler, # в стадии будущего обсуждения
 			profile_handler,
+			# cooperation_requests_handler, # в стадии будущего обсуждения
+			main_menu_handler,
 		],
 		MenuState.SUPPLIERS_REGISTER: [
 			suppliers_search_handler,
 			CallbackQueryHandler(select_suppliers_in_cat_callback, pattern=r"^category_\d+$"),
 			CallbackQueryHandler(show_user_details_callback, pattern=r"^user_\d+$"),
+			# TODO: [task 3]
 			CallbackQueryHandler(recommend_new_user_callback, pattern=r"^add_new_user_\d+$"),
-			CallbackQueryHandler(place_designer_order_callback, pattern=r"^place_order$"),
 		],
 		MenuState.SERVICES: [
-			# TODO: [task 1, task 3]
-			orders_group_handler,
+			services_handler,
 			CallbackQueryHandler(select_outsourcers_in_cat_callback, pattern=r"^category_\d+$"),
 			CallbackQueryHandler(show_user_details_callback, pattern=r"^user_\d+$"),
 			CallbackQueryHandler(recommend_new_user_callback, pattern=r"^add_new_user_\d+$"),
-			CallbackQueryHandler(place_designer_order_callback, pattern=r"^place_order$"),
-			CallbackQueryHandler(respond_designer_order_callback, pattern=r"^respond_order_\d+$"),
+			CallbackQueryHandler(new_order_callback, pattern=r"^place_order$"),
 		],
 		MenuState.ORDERS: [
-			# TODO: [task 1]
-			designer_orders_group_handler,
-			CallbackQueryHandler(show_order_details_callback, pattern=r"^order_\d+$"),
+			designer_orders_handler,
 			CallbackQueryHandler(show_user_details_callback, pattern=r"^user_\d+$"),
+			CallbackQueryHandler(show_order_details_callback, pattern=r"^order_\d+$"),
+			CallbackQueryHandler(new_order_callback, pattern=r"^place_order$"),
 			CallbackQueryHandler(select_order_executor_callback, pattern=r"^order_\d+__executor_\d+"),
-			CallbackQueryHandler(change_order_status_callback, pattern=r"^order_\d+__status_\d+"),
-			# CallbackQueryHandler(select_executor_orders_callback, pattern=r"^executor_\d+$"),
+			CallbackQueryHandler(manage_order_callback, pattern=r"^order_\d+__action_\d+"),
+			CallbackQueryHandler(remove_order_callback, pattern=r'^remove_order_\d+__(yes|no)$'),
+			CallbackQueryHandler(modify_order_callback, pattern=r"^modify_order_\d+__\D+$"),
+		],
+		MenuState.ADD_ORDER: [
+			MessageHandler(filters.TEXT & ~filters.COMMAND, add_order_fields_choice),
+			CallbackQueryHandler(update_category_list_callback, pattern=r'^category_\d+$'),
+		],
+		MenuState.MODIFY_ORDER: [
+			MessageHandler(filters.TEXT & ~filters.COMMAND, modify_order_fields_choice),
 		],
 		MenuState.USER_DETAILS: [
 			user_details_handler,
-			CallbackQueryHandler(save_supplier_rating_callback, pattern=r"^save_rating"),
-			CallbackQueryHandler(set_user_rating_callback, pattern=r"^rate"),
-			CallbackQueryHandler(show_authors_for_user_rating_callback, pattern=r"^authors_for_user_rating_\d+$"),
+			CallbackQueryHandler(answer_rating_questions_callback, pattern=r"^update_rating"),
+			CallbackQueryHandler(change_rating_callback, pattern=r"^save_rates"),
+			CallbackQueryHandler(select_rate_callback, pattern=r"^rate"),
+			CallbackQueryHandler(show_voted_designers_callback, pattern=r"^voted_list_for_user_\d+$"),
+			CallbackQueryHandler(change_supplier_segment_callback, pattern=r'user_\d+__segment_\d+$'),
+		],
+		MenuState.PROFILE: [
+			# TODO: [task 5]
+			profile_options_choice_handler,
+			CallbackQueryHandler(edit_user_details_callback, pattern=r"^modify_user_details"),
+			CallbackQueryHandler(modify_user_data_fields_callback, pattern=r"^modify_user_field_"),
+			CallbackQueryHandler(change_supplier_segment_callback, pattern=r'user_\d+$__segment_\d+$'),
+		],
+		MenuState.SETTINGS: [
+			# TODO: разработать структуру настроек
+		],
+		MenuState.FAVOURITES: [
+			CallbackQueryHandler(show_user_details_callback, pattern=r"^user_\d+$"),
 		],
 		MenuState.DESIGNER_EVENTS: [
 			CallbackQueryHandler(select_events_callback, pattern=r"^event_type_\d+$"),
@@ -222,17 +247,13 @@ main_dialog = ConversationHandler(
 		MenuState.DESIGNER_SANDBOX: [
 			CallbackQueryHandler(select_sandbox_callback, pattern=r"^sandbox_type_\d+$"),
 		],
-		MenuState.PROFILE: [
-			CallbackQueryHandler(edit_user_details_callback, pattern=r"^edit_user_details"),
-			CallbackQueryHandler(edit_details_fields_callback, pattern=r"^edit_field_"),
-			CallbackQueryHandler(select_supplier_segment_callback, pattern=r'^segment_\d+$'),
-			profile_options_choice_handler
-		],
 		MenuState.TARIFF_CHANGE: [
 			CallbackQueryHandler(choose_tariff_callback, pattern=r"^tariff_"),
 		],
 		MenuState.COOP_REQUESTS: [
 			CallbackQueryHandler(coop_request_message_callback),
+		],
+		MenuState.SUPPLIERS_SEARCH: [
 		],
 		MenuState.DONE: [
 			done_handler,
@@ -246,3 +267,4 @@ main_dialog = ConversationHandler(
 		CallbackQueryHandler(share_files_callback, pattern=r"^share_files$"),
 	]
 )
+
