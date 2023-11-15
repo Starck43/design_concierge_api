@@ -1,28 +1,29 @@
 import re
-from typing import Optional
+from typing import Optional, Union
 
 from telegram import Update
 from telegram.ext import (
 	CommandHandler, MessageHandler, ConversationHandler, CallbackQueryHandler, filters, ContextTypes
 )
 
-from bot.constants.messages import introduce_reg_message, yet_registered_message
+from bot.constants.keyboards import REG_GROUP_KEYBOARD
+from bot.constants.menus import cancel_reg_menu
+from bot.constants.messages import yet_registered_message
 from bot.constants.patterns import (CANCEL_PATTERN, REGISTRATION_PATTERN, DONE_PATTERN)
-from bot.handlers.common import catch_server_error, load_user_field_names, load_regions
+from bot.handlers.common import catch_server_error, load_user_field_names, load_regions, update_category_list_callback
 from bot.handlers.registration import (
-	choose_telegram_username_callback,
-	confirm_region_callback, choose_top_region_callback,
-	approve_verification_code_callback, end_registration,
-	cancel_registration_choice, introduce_callback, name_choice, work_experience_choice, categories_choice,
-	regions_choice, choose_segment_callback, segment_choice, socials_choice, address_choice,
-	input_phone, repeat_input_phone_callback, choose_categories_callback, interrupt_registration_callback
+	end_registration, choose_telegram_username_callback, confirm_region_callback, choose_top_region_callback,
+	approve_verification_code_callback, cancel_registration_choice, select_user_group_callback, name_choice,
+	regions_choice,
+	choose_segment_callback, segment_choice, socials_choice, address_choice, work_experience_choice, categories_choice,
+	input_phone, repeat_input_phone_callback, interrupt_registration_callback, introduce_choice
 )
 from bot.logger import log
 from bot.states.registration import RegState
-from bot.utils import fetch_user_data
+from bot.utils import fetch_user_data, generate_inline_markup, update_inline_keyboard
 
 
-async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Union[str, int]:
 	user = update.effective_user
 
 	data = await load_user_field_names(update.message, context)
@@ -51,13 +52,27 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
 		await catch_server_error(update.message, context, error=res, text=text)
 		return RegState.DONE
 
-	log.info(f'User {user.full_name} (ID:{user.id}) started registration.')
-	await introduce_reg_message(update.message)
-
 	user_data["token"] = res.get("token", None)
+	chat_data["chat_id"] = update.effective_chat.id
 	user_data["details"] = {"user_id": user.id}
 	chat_data["status"] = "registration"
-	chat_data["chat_id"] = update.effective_chat.id
+	log.info(f'User {user.full_name} (ID:{user.id}) started registration.')
+
+	await update.message.reply_text(
+		"Для начала давайте познакомимся.",
+		reply_markup=cancel_reg_menu,
+	)
+
+	inline_markup = generate_inline_markup(REG_GROUP_KEYBOARD, vertical=True)
+	inline_markup = update_inline_keyboard(
+		inline_keyboard=inline_markup.inline_keyboard,
+		active_value="",
+		button_type="checkbox"
+	)
+	await update.message.reply_text(
+		"Кого Вы представляете?",
+		reply_markup=inline_markup
+	)
 
 	return RegState.SELECT_USER_GROUP
 
@@ -76,21 +91,25 @@ registration_dialog = ConversationHandler(
 	],
 	states={
 		RegState.SELECT_USER_GROUP: [
-			CallbackQueryHandler(introduce_callback, pattern=r"^0|1$"),
+			MessageHandler(
+				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
+				introduce_choice
+			),
+			CallbackQueryHandler(select_user_group_callback, pattern=r"^0|1|2$"),
 		],
 		RegState.INPUT_NAME: [
 			MessageHandler(
 				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
 				name_choice
 			),
-			CallbackQueryHandler(choose_telegram_username_callback, pattern="^username|first_name|full_name$"),
+			CallbackQueryHandler(choose_telegram_username_callback, pattern="^username|full_name$"),
 		],
 		RegState.SELECT_CATEGORIES: [
 			MessageHandler(
 				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
 				categories_choice
 			),
-			CallbackQueryHandler(choose_categories_callback, pattern=r'^category_\d+$'),
+			CallbackQueryHandler(update_category_list_callback, pattern=r"^category_\d+$"),
 		],
 		RegState.INPUT_WORK_EXPERIENCE: [
 			MessageHandler(

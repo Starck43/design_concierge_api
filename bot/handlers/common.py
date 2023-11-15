@@ -13,13 +13,13 @@ from bot.constants.messages import (
 	offer_for_registration_message, share_link_message, place_new_order_message, send_unknown_question_message
 )
 from bot.constants.patterns import BACK_PATTERN, BACK_TO_TOP_PATTERN
-from bot.constants.static import ORDER_STATUS, ORDER_RELATED_USERS_TITLE, NO_ORDERS_MESSAGE_TEXT
+from bot.constants.static import ORDER_STATUS, CAT_GROUP_DATA, ORDER_RELATED_USERS_TITLE
 from bot.entities import TGMessage
 from bot.logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (
-	fetch_data, filter_list, generate_inline_markup, fetch_user_data, find_obj_in_list, extract_fields,
+	fetch_data, filter_list, generate_inline_markup, fetch_user_data, find_obj_in_dict, extract_fields,
 	match_query, dict_to_formatted_text, get_formatted_date, format_output_text, update_inline_keyboard
 )
 
@@ -458,23 +458,40 @@ def build_inline_username_buttons(users: List[dict]) -> InlineKeyboardMarkup:
 async def load_categories(
 		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
-		group: Union[int, list] = None,
+		group: Union[Literal[0, 1, 2], list] = None,
 		related_users: Union[None, str, int] = "all",
 ):
-	params = {"group": group}
+	if not group:
+		categories = context.chat_data.get("categories", [])
+
+	else:
+		categories = []
+		groups = [group] if isinstance(group, int) else group
+
+		for group in groups:
+			group_data = CAT_GROUP_DATA[group]
+			group_cats = context.chat_data.get(group_data["name"]+"_cats", [])
+			if group_cats:
+				categories += group_cats
+			else:
+				categories = None
+				break
+
+	if categories:
+		return categories
+
+	params = {}
+	if group:
+		params = {"group": group}
+
 	if related_users:
 		params["related_users"] = related_users
-	res = await fetch_data("/categories", params=params)
 
+	res = await fetch_data("/categories", params=params)
 	if res["error"]:
 		text = "Ошибка загрузки списка категорий"
-		await catch_server_error(
-			message,
-			context,
-			error=res,
-			text=text,
-			auto_send_notification=False
-		)
+		await send_error_to_admin(message, context, error=res, text=text)
+		await message.reply_text(f'❗️{text}')
 
 	return res["data"]
 
@@ -550,7 +567,7 @@ async def load_orders(
 
 	if res["error"]:
 		text = f'Ошибка загрузки заказ{"а" if order_id else "ов"}'
-		await catch_server_error(message, context, error=res, text=text)
+		await send_error_to_admin(message, context, error=res, text=text)
 
 	# сохраним в памяти полученные с сервера заказы в виде объектов с ключом order.id
 	elif data:
@@ -567,23 +584,19 @@ async def update_order(
 		params: dict = None,
 		data: dict = None,
 		method: Literal["POST", "DELETE"] = "POST"
-) -> Optional[dict]:
-	res = await fetch_data(
-		f'/orders/{"create" if not order_id and method == "POST" else order_id}',
-		params=params,
-		data=data,
-		method=method
-	)
+) -> Tuple[dict, str]:
+	endpoint = f'/orders/{"create" if not order_id and method == "POST" else order_id}'
+	res = await fetch_data(endpoint, params=params,data=data, method=method)
 
-	if res["error"] is not None:
+	if res["error"]:
 		res.setdefault("request_body", data)
 		if order_id:
-			text = f'Ошибка {"обновления" if method == "POST" else "удаления"} заказа (ID:{order_id})!'
+			text = f'Ошибка {"обновления" if method == "POST" else "удаления"} заказа.'
 		else:
-			text = 'Ошибка создания нового заказа!'
+			text = 'Ошибка при создании заказа.'
 
-		await catch_server_error(message, context, error=res, text=text)
-		return None
+		await send_error_to_admin(message, context, error=res, text=text)
+		return None, text
 
 	orders = context.chat_data.setdefault("orders", {})
 	if method == "DELETE":
@@ -592,7 +605,7 @@ async def update_order(
 		_id = res["data"]["id"]
 		orders[_id] = res["data"]  # обновим заказ в сохраненных данных
 
-	return res["data"]
+	return res["data"], None
 
 
 async def load_user_field_names(
@@ -638,34 +651,38 @@ async def update_favourites(
 	return res["data"], None
 
 
-async def update_category_list_callback(
-		update: Update,
-		context: ContextTypes.DEFAULT_TYPE,
-		cats_key_name: Literal["categories", "outsourcer_categories"] = "outsourcer_categories"
-) -> None:
-	# Обработчик нажатий на inline кнопки выбора категорий
+async def update_category_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+	""" Колбэк выбора нажатой inline кнопки для списка категорий """
+
 	query = update.callback_query
-
 	await query.answer()
-	cat_id = query.data.lstrip("category_")
 
-	categories = context.chat_data.get(cats_key_name, [])
+	query_data = query.data.split("__")
+	cat_id = query_data[-1].lstrip("category_")
+	group = None
+	if len(query_data) > 1:
+		group = int(query_data[0].lstrip("group_"))
+
+	categories = await load_categories(query.message, context, group=group)
+	if not categories:
+		return
+
+	selected_cat = find_obj_in_dict(categories, {"id": int(cat_id)})
+	if not selected_cat:
+		return
+
 	local_data = context.chat_data.setdefault("local_data", {})
 	selected_categories = local_data.setdefault("selected_categories", {})
 
 	await delete_messages_by_key(context, "warn_message_id")
 
 	# Добавим или удалим найденную категорию
-	active_category, _ = find_obj_in_list(categories, {"id": int(cat_id)})
-	if not active_category:
-		return
-
 	if selected_categories.get(cat_id):
 		del selected_categories[cat_id]
 	else:
 		selected_categories[cat_id] = {
-			"name": active_category["name"],
-			"group": active_category["group"]
+			"name": selected_cat["name"],
+			"group": selected_cat["group"]
 		}
 
 	keyboard = query.message.reply_markup.inline_keyboard
@@ -701,7 +718,7 @@ def order_has_approved_executor(order: dict) -> bool:
 	if not order["executor"]:
 		return False
 
-	responded_user, _ = find_obj_in_list(order["responded_users"], {"id": order["executor"]})
+	responded_user = find_obj_in_dict(order["responded_users"], {"id": order["executor"]})
 	return not bool(responded_user)
 
 
@@ -761,7 +778,7 @@ async def show_user_orders(
 		messages.append(reply_message)
 
 	if not orders:
-		message_text = NO_ORDERS_MESSAGE_TEXT.get(user_role, "❕Пока пусто.")
+		message_text = "❕Список заказов пустой"
 		reply_message = await message.reply_text(message_text, reply_markup=reply_markup)
 		messages.append(reply_message)
 
@@ -801,7 +818,7 @@ async def show_user_orders(
 		order_status, date_string = get_order_status(order)
 		if not user_role == "creator":
 			order_status = ""
-			inline_message_text += f'\nЗаказчик: _{order["owner_name"]}_'
+			# inline_message_text += f'\nЗаказчик: _{order["owner_name"]}_'
 
 		if order_has_executor and order["executor"] != user_id:
 			executor = order.get("executor_name")
@@ -816,9 +833,6 @@ async def show_user_orders(
 
 		if order_status:
 			inline_message_text += f'\nСтатус: _{order_status}_'
-
-		if user_role == "contender" and order["responded_users"] and not order["executor"] == user_id:
-			inline_message_text += f'\nОткликнулось на заявку: _{len(order["responded_users"]) or "0"}_'
 
 		inline_message = await message.reply_text(inline_message_text, reply_markup=inline_markup)
 		messages.append(inline_message)

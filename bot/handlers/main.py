@@ -1,6 +1,6 @@
-from typing import Optional, Callable, Union, Literal
+from typing import Optional, Literal
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
@@ -13,7 +13,7 @@ from bot.constants.keyboards import (
 )
 from bot.constants.menus import back_menu
 from bot.constants.messages import (
-	select_categories_message, add_new_user_message, select_events_message, choose_sandbox_message,
+	show_categories_message, add_new_user_message, select_events_message, choose_sandbox_message,
 	place_new_order_message, send_notify_message,
 	required_category_warn_message, only_in_list_warn_message
 )
@@ -23,8 +23,7 @@ from bot.constants.patterns import (
 	CONTINUE_PATTERN, CANCEL_PATTERN
 )
 from bot.constants.static import (
-	ORDER_REMOVE_MESSAGE_TEXT, ORDER_RESPONSE_MESSAGE_TEXT,
-	ORDER_ERROR_MESSAGE_TEXT, ORDER_FIELD_SET, SUPPLIER_SUBTITLE
+	ORDER_RESPONSE_MESSAGE_TEXT, ORDER_FIELD_DATA, CAT_GROUP_DATA
 )
 from bot.entities import TGMessage
 from bot.handlers.common import (
@@ -65,14 +64,19 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 		if priority_group == Group.DESIGNER:
 			menu_markup = generate_reply_markup(SUPPLIERS_REGISTER_KEYBOARD)
 
-		if not chat_data.get("supplier_categories"):
+		# TODO: перенести проверку внутрь load_categories
+		if not chat_data.get("suppliers_cats"):
 			# Получим список поставщиков для добавления в реестр
-			chat_data["supplier_categories"] = await load_categories(update.message, context, group=2)
-			if not chat_data["supplier_categories"]:
-				return await go_back_section(update, context, "back")
+			chat_data["suppliers_cats"] = await load_categories(update.message, context, group=2)
+			if not chat_data["suppliers_cats"]:
+				return section["state"]
 
 		reply_message = await update.message.reply_text(text=f'*{title}*', reply_markup=menu_markup)
-		inline_message = await select_categories_message(update.message, chat_data["supplier_categories"])
+		inline_message = await show_categories_message(
+			update.message,
+			category_list=chat_data["suppliers_cats"],
+			group=2
+		)
 		messages += [reply_message, inline_message]
 
 	# Раздел - БИРЖА УСЛУГ
@@ -107,17 +111,18 @@ async def main_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 			title = str(state).upper()
 			subtitle = "Категории исполнителей:"
 
-			if not chat_data.get("outsourcer_categories"):
+			if not chat_data.get("outsourcers_cats"):
 				# Получим категории для аутсорсеров
-				chat_data["outsourcer_categories"] = await load_categories(update.message, context, group=1)
-				if not chat_data["outsourcer_categories"]:
+				chat_data["outsourcers_cats"] = await load_categories(update.message, context, group=1)
+				if not chat_data["outsourcers_cats"]:
 					return section["state"]
 
 			reply_message = await update.message.reply_text(f'*{title}*', reply_markup=menu_markup)
-			inline_message = await select_categories_message(
+			inline_message = await show_categories_message(
 				update.message,
+				category_list=chat_data["outsourcers_cats"],
+				group=1,
 				title=subtitle,
-				category_list=chat_data["outsourcer_categories"]
 			)
 			messages += [reply_message, inline_message]
 
@@ -401,10 +406,9 @@ async def add_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_
 	# если продолжаем и категории еще не сохранены в локальной переменной order_data
 	elif match_query(CONTINUE_PATTERN, query_message) and not local_data["order_data"].get("categories"):
 		await update.message.delete()
-		selected_categories = local_data.get("selected_categories")
+		selected_categories = local_data.pop("selected_categories", None)
 		if selected_categories:
 			local_data["order_data"] = {"categories": list(selected_categories.keys())}
-			local_data.pop("selected_categories")
 			return await new_order_callback(update, context)
 		else:
 			await required_category_warn_message(update.message, context)
@@ -416,8 +420,8 @@ async def add_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_
 		return section["state"]
 
 	# сохранение и валидация введенных данных
-	order = await modify_order_fields_choice(update, context)
-	if not order:  # если некорректно введены данные или ошибка чтения/сохранения заказа
+	state = await modify_order_fields_choice(update, context)
+	if not state:  # если некорректно введены данные или ошибка чтения/сохранения заказа
 		return section["state"]
 
 	if field_name == "title":
@@ -430,7 +434,7 @@ async def add_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_
 
 	elif field_name == "price":
 		field_name = "expire_date"
-		title = "Определите конечную дату выполнения работ или введите \\* если срок не органичен"
+		title = "Определите конечную дату выполнения работ или введите *️⃣ если срок не органичен"
 
 	else:
 		field_name = None
@@ -458,7 +462,7 @@ async def add_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_
 	return section["state"]
 
 
-async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[dict]:
+async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	""" Функция обновления полей заказа дизайнера """
 	section = get_section(context)
 	is_new_order = section["state"] == MenuState.ADD_ORDER
@@ -466,6 +470,7 @@ async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAU
 	chat_data = context.chat_data
 	last_message_ids = chat_data.setdefault("last_message_ids", {})
 	local_data = chat_data.setdefault("local_data", {})
+	order_data = local_data.setdefault("order_data", {})
 	field_name = local_data["order_field_name"]
 	field_value = update.message.text.strip()
 	message_text = field_value
@@ -509,7 +514,7 @@ async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAU
 		local_data["order_data"] = {"status": 1}
 
 	data_changed = True
-	local_data["order_data"].update({field_name: field_value})
+	order_data.update({field_name: field_value})
 	order_id = local_data.get("order_id", None)
 	if order_id:
 		order = await load_orders(update.message, context, order_id=order_id)
@@ -517,8 +522,15 @@ async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAU
 			return
 		data_changed = not bool(order[field_name] == field_value)
 
-	order = await update_order(update.message, context, order_id, data=local_data["order_data"])
-	if not order:
+	order, error_text = await update_order(update.message, context, order_id, data=local_data["order_data"])
+	if error_text:
+		message = await edit_or_reply_message(
+			update.message,
+			message_id=last_message_ids.get(field_name),
+			text=error_text,
+			reply_markup=section["reply_markup"],
+		)
+		chat_data["warn_message_id"] = message.message_id
 		return
 
 	await update.message.delete()
@@ -536,7 +548,7 @@ async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAU
 		message_text = f'❕*{message_text}*\n_данные идентичны!_'
 
 	if not is_new_order:  # если это изменение заказа, то дополнительно к сообщению добавляем заголовок с названием поля
-		message_text = f'{ORDER_FIELD_SET[field_name]}:\n' + message_text
+		message_text = f'{ORDER_FIELD_DATA[field_name]}:\n' + message_text
 
 	message = await edit_or_reply_message(
 		update.message,
@@ -548,31 +560,13 @@ async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAU
 	# сохраним id измененного сообщения для удаления при возврате
 	last_message_ids.update({field_name: message.message_id})
 
-	return order
+	return section["state"]
 
 
 @send_action(ChatAction.TYPING)
-async def select_suppliers_in_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	""" Отображение списка пользователей из группы SUPPLIER в разделе: Реестр поставщиков -> Категория """
+async def select_users_in_category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+	""" Функция загрузки и отображения списка пользователей в категории по cat_id """
 
-	return await select_users_in_category(update, context, callback=select_suppliers_in_cat_callback)
-
-
-@send_action(ChatAction.TYPING)
-async def select_outsourcers_in_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	""" Отображение списка пользователей из группы DESIGNER,OUTSOURCER в разделе: Биржа услуг -> Категория """
-
-	return await select_users_in_category(update, context, callback=select_outsourcers_in_cat_callback)
-
-
-async def select_users_in_category(
-		update: Union[Update, CallbackQuery],
-		context: ContextTypes.DEFAULT_TYPE,
-		callback: Callable
-) -> str:
-	""" Вспомогательная функция загрузки и отображения списка пользователей в категории по cat_id.
-		is_supplier_register - раздел, в котором отображать контент: Реестр или Биржа
-	"""
 	query = update.callback_query
 	if query:
 		await query.answer()
@@ -581,54 +575,59 @@ async def select_users_in_category(
 
 	priority_group = context.user_data["priority_group"]
 	chat_data = context.chat_data
-	# установим флаг для понимания откуда вызывалась эта функция
-	is_supplier_register = callback.__name__ == "select_suppliers_in_cat_callback"
-
 	section = await prepare_current_section(context)
-	query_data = section.get("query_message") or query.data
+	query_message = section.get("query_message") or query.data
 	state = section["state"]
 	menu_markup = back_menu
+	callback = select_users_in_category_callback
 
-	cat_id = query_data.lstrip("category_")
+	query_data = query_message.split("__")
+	cat_id = query_data[-1].lstrip("category_")
+	group = None
+	group_data = None
 
+	if len(query_data) > 1:
+		group = int(query_data[0].lstrip("group_"))
+		group_data = CAT_GROUP_DATA[group]
+
+	# загрузим всех пользователей в выбранной категории
 	users = await load_cat_users(query.message, context, cat_id)
 	if not users:
 		return state
 
 	inline_markup = build_inline_username_buttons(users)
-	categories = chat_data.get("supplier_categories" if is_supplier_register else "outsourcer_categories")
+	categories = chat_data.get(f'{group_data["name"]}_cats' if group_data else "categories")
 	selected_cat = find_obj_in_dict(categories, params={"id": int(cat_id)})
 	if not selected_cat:
 		return state
 
 	title = f'➡️ Категория *{selected_cat["name"].upper()}*'
-	subtitle = SUPPLIER_SUBTITLE[int(is_supplier_register)]
+	subtitle = group_data["title"]
 
 	reply_message = await query.message.reply_text(title, reply_markup=menu_markup)
 	inline_message = await query.message.reply_text(subtitle, reply_markup=inline_markup)
 	messages = [reply_message, inline_message]
 
 	if priority_group == Group.DESIGNER:
-		if is_supplier_register:
+		# TODO: [task 3]: реализовать добавление рекомендованного пользователя
+		message = await add_new_user_message(query.message, category=selected_cat)
+		messages.append(message)
+
+		if group == 2:
 			keyboard = SUPPLIERS_REGISTER_KEYBOARD
 			menu_markup = generate_reply_markup(keyboard)
 
-			# TODO: [task 3]: реализовать добавление рекомендованного пользователя
-			extra_message = await add_new_user_message(query.message, category=selected_cat)
-			messages.append(extra_message)
-
 		else:
 			# выведем в конце сообщение с размещением нового заказа
-			extra_message = await place_new_order_message(query.message, category=selected_cat)
-
-		messages.append(extra_message)
+			message = await place_new_order_message(query.message, category=selected_cat)
+			messages.append(message)
 
 	add_section(
 		context,
 		state=state,
 		messages=messages,
 		reply_markup=menu_markup,
-		query_message=query_data,
+		query_message=query_message,
 		callback=callback,
 		selected_cat=cat_id
 	)
@@ -847,7 +846,7 @@ async def show_order_details_callback(update: Update, context: ContextTypes.DEFA
 
 	order = await load_orders(query.message, context, order_id=order_id)
 	if not order:
-		return await go_back_section(update, context, "back")
+		return section["state"]
 
 	order_status, _ = get_order_status(order)
 	order_price = f'{order["price"]}₽' if order["price"] else "по договоренности"
@@ -866,10 +865,10 @@ async def show_order_details_callback(update: Update, context: ContextTypes.DEFA
 
 	state = section["state"]
 	menu_markup = back_menu
-	inline_markup = None
 
 	message = await query.message.reply_text(f'*{order["title"]}*', reply_markup=menu_markup)
 	messages = [message]
+	inline_markup = None
 
 	if user_role != "creator" and user_is_contender:  # если пользователь является выбранным претендентом
 		if order["status"] == 1:  # и заказ активный
@@ -938,7 +937,12 @@ async def show_order_details_callback(update: Update, context: ContextTypes.DEFA
 					callback_data_prefix=f'order_{order_id}__action_'
 				)
 				# обновим запись и получим новый статус
-				order = await update_order(query.message, context, order_id, data={"status": 0, "responded_users": []})
+				data = {"status": 0, "responded_users": []}
+				order, error_text = await update_order(query.message, context, order_id, data=data)
+				if error_text:
+					message = await query.message.reply_text(text=error_text)
+					context.chat_data["warn_message_id"] = message.message_id
+
 				order_status, _ = get_order_status(order)
 
 	# если это пока никто и заказ активный, то предложим откликнуться или снять отклик
@@ -946,8 +950,9 @@ async def show_order_details_callback(update: Update, context: ContextTypes.DEFA
 		user_id = context.user_data["details"]["id"]
 		responded_user, _ = find_obj_in_list(order["responded_users"], {"id": user_id})
 		action_code = int(bool(responded_user))  # флаг: пользователь уже есть в списке откликнувшихся или нет
+		responded_user_counter = f' ({len(order["responded_users"]) or "0"})'
 		inline_markup = generate_inline_markup(
-			[ORDER_RESPOND_KEYBOARD[action_code]],
+			[ORDER_RESPOND_KEYBOARD[action_code] + responded_user_counter],
 			callback_data=f'order_{order_id}__action_{20 + action_code}'
 		)
 
@@ -955,8 +960,8 @@ async def show_order_details_callback(update: Update, context: ContextTypes.DEFA
 		f'`{order["description"]}`'
 		f'{format_output_text("_Категория_", category_list, value_tag="_")}\n'
 		f'{format_output_text("Автор заказа", order["owner_name"] if not user_is_owner else "", value_tag="*")}'
-		f'{format_output_text(ORDER_FIELD_SET["price"], order_price, value_tag="*")}'
-		f'{format_output_text(ORDER_FIELD_SET["expire_date"], date_string if date_string else "не установлен", value_tag="*")}\n'
+		f'{format_output_text(ORDER_FIELD_DATA["price"], order_price, value_tag="*")}'
+		f'{format_output_text(ORDER_FIELD_DATA["expire_date"], date_string if date_string else "не установлен", value_tag="*")}\n'
 		f'{format_output_text("Статус", order_status, value_tag="*")}',
 		reply_markup=inline_markup
 	)
@@ -1022,8 +1027,8 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	elif action_code == 10:
 		action_message["text"] = "_Что желаете изменить ?_"
 		action_message["reply_markup"] = generate_inline_markup(
-			list(ORDER_FIELD_SET.values()),
-			callback_data=list(ORDER_FIELD_SET.keys()),
+			list(ORDER_FIELD_DATA.values()),
+			callback_data=list(ORDER_FIELD_DATA.keys()),
 			callback_data_prefix=f'modify_order_{order_id}__'
 		)
 
@@ -1038,13 +1043,15 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 			username = context.user_data["details"]["name"] or context.user_data["details"]["username"]
 			message_text = f'Пользователь откликнулся на Ваш заказ:\n _"{order["title"]}"_\n'
 			notify_message = {"user_id": order["owner"], "from_name": username, "text": message_text}
+			responded_user_counter = f' ({len(order["responded_users"]) + 1})'
 
 		else:  # если претендент на заказ отзывает свой отклик до выбора его исполнителем
 			params = {"remove_user": user_id}
+			responded_user_counter = f' ({len(order["responded_users"]) - 1 if order["responded_users"] else 0})'
 
 		action_index = abs(action_code - 21)
 		inline_markup = generate_inline_markup(
-			ORDER_RESPOND_KEYBOARD[action_index],
+			[ORDER_RESPOND_KEYBOARD[action_index] + responded_user_counter],
 			callback_data=f'order_{order_id}__action_2{action_index}'
 		)
 
@@ -1147,8 +1154,8 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 	if action_code < 10 or action_code >= 20:
 		data = {"status": status} if status is not None else {}
-		order = await update_order(query.message, context, order_id, params=params, data=data)
-		if order:
+		order, error_text = await update_order(query.message, context, order_id, params=params, data=data)
+		if not error_text:
 			if order["status"] == 0:  # если заказ остановлен, удалим с экрана список откликнувшихся и его подзаголовок
 				await delete_messages_by_key(context, tg_messages)
 				tg_messages = []
@@ -1175,7 +1182,7 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 				await send_notify_message(context, **decline_notify_message)
 
 		else:
-			action_message["text"] = action_message.get("error", "Не удалось изменить данные о заказе на сервере!")
+			action_message["text"] = error_text
 
 	# выведем сообщение о действии, изменении заказа или ошибке
 	if action_message.get("text"):
@@ -1208,16 +1215,16 @@ async def select_order_executor_callback(update: Update, context: ContextTypes.D
 	section = get_section(context)
 	tg_messages = section.get("messages", [])
 	contender_messages = []
-	error_message_text = None
+	error_text = None
 
 	if order["status"] == 0:
-		error_message_text = ORDER_ERROR_MESSAGE_TEXT[0]
+		error_text = "🚫 Операция недоступна если заказ не активирован!"
 
 	elif order["status"] > 2:
-		error_message_text = ORDER_ERROR_MESSAGE_TEXT[1]
+		error_text = "🚫 Операция недоступна если заказ завершен!"
 
-	if error_message_text:
-		message = await edit_or_reply_message(query.message, error_message_text, message_id=last_message_id)
+	if error_text:
+		message = await edit_or_reply_message(query.message, error_text, message_id=last_message_id)
 		context.chat_data["last_message_id"] = message.message_id
 		return
 
@@ -1229,8 +1236,10 @@ async def select_order_executor_callback(update: Update, context: ContextTypes.D
 
 	# Выберем текущего претендента в качестве предполагаемого исполнителя
 	if not user_is_selected:
-		order = await update_order(query.message, context, order_id, data={"executor": executor_id})
-		if not order:
+		order, error_text = await update_order(query.message, context, order_id, data={"executor": executor_id})
+		if error_text:
+			message = await edit_or_reply_message(query.message, error_text, message_id=last_message_id)
+			context.chat_data["last_message_id"] = message.message_id
 			return
 
 		# удалим кнопку выбора у всех претендентов кроме выбранного
@@ -1258,8 +1267,10 @@ async def select_order_executor_callback(update: Update, context: ContextTypes.D
 	# если пользователь уже выбран на роль исполнителя, то откажемся от него и отобразим оставшихся претендентов
 	else:
 		# обновление данных заказа с пустым значением executor и удалим его из претендентов
-		order = await update_order(query.message, context, order_id, params={"clear_executor": executor_id})
-		if not order:
+		order, error_text = await update_order(query.message, context, order_id, params={"clear_executor": executor_id})
+		if error_text:
+			message = await edit_or_reply_message(query.message, error_text, message_id=last_message_id)
+			context.chat_data["last_message_id"] = message.message_id
 			return
 
 		# добавим кнопки выбора у оставшихся претендентов
@@ -1315,27 +1326,23 @@ async def modify_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	query = update.callback_query
 	await query.answer()
 
-	query_data = query.data.lstrip('modify_order_').split("__")
-	if len(query_data) < 2:
-		return
-
-	order_id = int(query_data[0])
+	query_data = query.data.split("__")
 	button_type = query_data[-1]
 	chat_data = context.chat_data
 	last_message_ids = chat_data.setdefault("last_message_ids", {})
 	local_data = chat_data.setdefault("local_data", {})
 
-	message_text = ORDER_FIELD_SET.get(button_type, "")
-	if message_text:
-		message_text = f'*{message_text}*\n_Введите новое значение_'
+	order_title = ORDER_FIELD_DATA.get(button_type, "")
+	if order_title:
+		local_data["order_field_name"] = button_type
+		message_text = f'*{order_title}*\n_Введите новое значение_'
 		if button_type == "expire_date":
-			message_text += " в формате: дд.мм.гггг или укажите символ \\* для бессрочного варианта."
+			message_text += " в формате: _дд.мм.гггг_ или введите символ *️⃣ для бессрочного варианта."
 	else:
-		message_text = "_Некорректное поле!_"
+		message_text = "_⚠️ Некорректное поле!_"
 
 	message = await query.message.reply_text(message_text)
 	last_message_ids[button_type] = message.message_id
-	local_data["order_data"][button_type] = ""
 
 	return MenuState.MODIFY_ORDER
 
@@ -1355,8 +1362,10 @@ async def remove_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	last_message_id = context.chat_data.get("last_message_id", None)
 
 	if button_type == "yes":
-		order = await update_order(query.message, context, order_id, method="DELETE")
-		message_text = ORDER_REMOVE_MESSAGE_TEXT[int(bool(order))]
+		order, error_text = await update_order(query.message, context, order_id, method="DELETE")
+		message_text = "✔️ Ваш заказ успешно удален!"
+		if error_text:
+			message_text = f'❗️{error_text}'
 		message = await edit_or_reply_message(query.message, message_id=last_message_id, text=message_text)
 		context.chat_data["last_message_id"] = message.message_id
 
@@ -1405,15 +1414,16 @@ async def new_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 		reply_message = await query.message.reply_text(f'*{title}*', reply_markup=menu_markup)
 		messages = [reply_message.message_id]
 
-		if not chat_data.get("outsourcer_categories"):
-			chat_data["outsourcer_categories"] = await load_categories(query.message, context, group=1)
-			if not chat_data["outsourcer_categories"]:
-				return section["state"]
+		chat_data["outsourcers_cats"] = await load_categories(query.message, context, group=1)
+		if not chat_data["outsourcers_cats"]:
+			return section["state"]
 
-		inline_message = await select_categories_message(
+		inline_message = await show_categories_message(
 			query.message,
+			category_list=chat_data["outsourcers_cats"],
+			group=1,
 			title=subtitle,
-			category_list=chat_data["outsourcer_categories"]
+			button_type="checkbox"
 		)
 		messages.append(inline_message.message_id)
 

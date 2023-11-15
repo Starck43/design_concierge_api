@@ -227,14 +227,14 @@ async def answer_rating_questions_callback(update: Update, context: ContextTypes
 
 	chat_data = context.chat_data
 	selected_user = chat_data["selected_user"]
-	related_detail_rating = selected_user.get("related_detail_rating", {})
 	local_data = chat_data.setdefault("local_data", {})
-	local_data["selected_rating_list"] = [related_detail_rating]  # подготовим список с рейтингом для изменения
+	related_detail_rating = selected_user.get("related_detail_rating") or {}
 
 	# вывод оценок для выставления рейтинга
 	rating_title = f'Проставьте оценки по каждому вопросу от 1 до {MAX_RATE}'
-	rating_dict = related_detail_rating.copy()
-	if rating_dict:
+	if related_detail_rating:
+		local_data["selected_rating_list"] = [related_detail_rating]  # подготовим список с рейтингом для изменения
+		rating_dict = related_detail_rating.copy()
 		rating_dict.pop('author_id', None)
 		rating_dict.pop('receiver_id', None)
 		rating_dict = list(rating_dict.values())
@@ -254,7 +254,6 @@ async def answer_rating_questions_callback(update: Update, context: ContextTypes
 	)
 
 
-@send_action(ChatAction.TYPING)
 async def select_rate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	query = update.callback_query
 	await query.answer()
@@ -323,6 +322,7 @@ async def change_rating_callback(update: Update, context: ContextTypes.DEFAULT_T
 	if user:
 		context.chat_data["selected_user"] = user
 	user["related_total_rating"] = rated_user["related_total_rating"]
+	await delete_messages_by_key(context, "warn_message_id")
 
 	# обновим рейтинг в карточке пользователя
 	user_details_message: Message = section["messages"].pop(1)

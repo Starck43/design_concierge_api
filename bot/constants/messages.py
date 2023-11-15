@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Literal
 
 from telegram import (
 	Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Document, PhotoSize
@@ -7,11 +7,12 @@ from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import (
 	CONFIRM_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SUBMIT_REG_KEYBOARD, CANCEL_REG_KEYBOARD, START_REG_KEYBOARD,
-	SEGMENT_KEYBOARD, REG_GROUP_KEYBOARD, REPEAT_KEYBOARD
+	SEGMENT_KEYBOARD, REPEAT_KEYBOARD
 )
 from bot.constants.menus import continue_reg_menu, cancel_reg_menu, start_menu, done_menu
+from bot.constants.static import CAT_GROUP_DATA
 from bot.utils import (
-	generate_inline_markup, generate_reply_markup, data_list_to_string, fetch_user_data
+	generate_inline_markup, generate_reply_markup, fetch_user_data, update_inline_keyboard
 )
 
 
@@ -103,46 +104,33 @@ async def share_link_message(message: Message, link: str, link_text: str, text: 
 	await message.reply_text(text, reply_markup=inline_markup)
 
 
-async def introduce_reg_message(message: Message) -> Message:
-	await message.reply_text(
-		"Для начала давайте познакомимся.",
-		reply_markup=cancel_reg_menu,
+async def show_categories_message(
+		message: Message,
+		category_list: List[dict],
+		group: int = None,
+		title: str = None,
+		button_type: Optional[Literal["checkbox", "radiobutton"]] = None
+) -> Message:
+
+	inline_markup = generate_inline_markup(
+		category_list,
+		item_key="name",
+		callback_data="id",
+		callback_data_prefix=f"group_{group}__category_" if group else "category_",
+		vertical=True
 	)
+
+	if button_type:
+		inline_markup = update_inline_keyboard(
+			inline_keyboard=inline_markup.inline_keyboard,
+			active_value="",
+			button_type=button_type
+		)
 
 	return await message.reply_text(
-		"Кого Вы представляете?",
-		reply_markup=generate_inline_markup(REG_GROUP_KEYBOARD),
+		title or 'Список категорий:',
+		reply_markup=inline_markup,
 	)
-
-
-async def select_categories_message(
-		message: Message,
-		category_list: List,
-		title: str = None,
-		message_id: Optional[int] = None
-) -> Optional[Message]:
-	if message_id is None:
-		inline_markup = generate_inline_markup(
-			category_list,
-			item_key="name",
-			callback_data="id",
-			callback_data_prefix="category_",
-			vertical=True
-		)
-		return await message.reply_text(
-			title or 'Список категорий:',
-			reply_markup=inline_markup,
-		)
-
-	else:
-		categories = data_list_to_string(category_list, field_names="name", separator="\n☑️ ")
-
-		await message.get_bot().edit_message_text(
-			title or f'*Выбранные категории:*'
-			         f'\n☑️ {categories}',
-			chat_id=message.chat_id,
-			message_id=message_id,
-		)
 
 
 async def required_category_warn_message(
@@ -180,7 +168,7 @@ async def not_validated_warn_message(
 		text: str = None
 ) -> Message:
 	message = await message.reply_text(
-		text or "⚠️ Ответ должен обязательно содержать число!\n",
+		text or "❗️Ответ должен обязательно содержать число\n",
 		reply_markup=reply_markup,
 	)
 	context.chat_data["warn_message_id"] = message.message_id
@@ -258,7 +246,7 @@ async def confirm_region_message(message: Message, text: str = None) -> Message:
 		callback_data_prefix="choose_region_"
 	)
 	return await message.reply_text(
-		f'{text}, все верно?',
+		f'{text}, все верно❔',
 		reply_markup=inline_markup
 	)
 
@@ -282,7 +270,7 @@ async def not_found_region_message(message: Message, context: ContextTypes.DEFAU
 
 async def not_detected_region_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
 	message = await message.reply_text(
-		text or "⚠️ Не удалось определить местоположение.\n"
+		text or "❕Не удалось определить местоположение.\n"
 		        "Введите регион самостоятельно.",
 		reply_markup=continue_reg_menu,
 	)
@@ -299,14 +287,14 @@ async def required_region_warn_message(message: Message, context: ContextTypes.D
 
 async def offer_to_input_socials_message(message: Message, text: str = None) -> None:
 	await message.reply_text(
-		text or 'Укажите свой сайт или соцсеть или другой ресурс, где можно увидеть ваши работы:',
+		text or '🌐 Укажите свой сайт/соцсеть или другой ресурс, где можно увидеть ваши проекты',
 		reply_markup=continue_reg_menu,
 	)
 
 
 async def incorrect_socials_warn_message(message: Message) -> None:
 	await message.reply_text(
-		'⚠️ Адрес должен начинаться с "http"',
+		'⚠️ Адрес должен начинаться с "http://"',
 		reply_markup=continue_reg_menu,
 	)
 
@@ -319,42 +307,44 @@ async def offer_to_select_segment_message(message: Message) -> Message:
 	)
 
 	return await message.reply_text(
-		"🎯 Укажите сегмент, в котором Вы работаете:",
+		"🎯 Выберите сегмент, в котором Вы работаете:",
 		reply_markup=buttons
 	)
 
 
 async def offer_to_input_address_message(message: Message) -> Message:
 	return await message.reply_text(
-		"*Введите свой адрес:*",
+		"*🏠 Укажите свой рабочий адрес*",
 		reply_markup=continue_reg_menu,
 	)
 
 
 async def success_save_rating_message(message: Message, user_data: dict) -> Message:
 	return await message.reply_text(
-		f'Рейтинг успешно сохранен!\n'
-		f'Спасибо за оценку ♥️\n\n'
-		f'*Личный рейтинг:* ⭐_{user_data["related_total_rating"]}_\n️'
-		f'*Общий рейтинг:* ⭐_{user_data["total_rating"]}️_\n'
+		f'*✅ Рейтинг успешно сохранен!*\n'
+		f'_Личный рейтинг: ⭐{user_data["related_total_rating"]}_\n️'
+		f'_Общий рейтинг: ⭐{user_data["total_rating"]}️_\n'
 	)
 
 
 async def yourself_rate_warning_message(message: Message) -> Message:
 	return await message.reply_text(
-		f'*⚠️ Нельзя выставлять оценки самому себе!*',
+		f'*❗️Нельзя выставлять оценки самому себе!*',
 	)
 
 
 async def add_new_user_message(message: Message, category: dict) -> Message:
 	inline_markup = generate_inline_markup(
-		["🆕 Добавить компанию"],
+		["➕ Добавить"],
 		callback_data=str(category["group"]),
 		callback_data_prefix="add_new_user_",
 	)
 
+	group_data = CAT_GROUP_DATA[category["group"]]
+	group_title = group_data["title"][:-1] + "а"
 	return await message.reply_text(
-		f'Порекомендовать компанию в категории *{category["name"].upper()}*',
+		f'_🗣 Порекомендовать нового {group_title.lower()} в категории_ '
+		f'*{category["name"].upper()}*',
 		reply_markup=inline_markup
 	)
 
@@ -382,7 +372,7 @@ async def continue_reg_message(message: Message, text: str = None) -> None:
 async def offer_to_cancel_action_message(message: Message, text: str = None) -> Message:
 	inline_markup = generate_inline_markup([CONFIRM_KEYBOARD], callback_data=["yes", "no"])
 	return await message.reply_text(
-		text or '*❗Несохраненные данные будут утеряны❗️*\n'
+		text or '*❗Несохраненные данные будут утеряны*\n'
 		        'Все равно продолжить?',
 		reply_markup=inline_markup,
 	)
@@ -390,7 +380,7 @@ async def offer_to_cancel_action_message(message: Message, text: str = None) -> 
 
 async def share_files_message(message: Message, text: str) -> Message:
 	inline_markup = generate_inline_markup(
-		["Прикрепить файлы"],
+		["📎 Прикрепить файлы"],
 		callback_data="share_files",
 	)
 	return await message.reply_text(text, reply_markup=inline_markup)
@@ -400,7 +390,7 @@ async def check_file_size_message(message: Message, file: Union[Document, PhotoS
 	if file and file.file_size > limit * 1024 * 1024:  # 5 MB
 		return await message.reply_text(
 			f'⚠️ Превышен размер файла!\n'
-			f'_Максимально допустимый размер - 5мб_'
+			f'_Максимальный размер:_ *5МБ*'
 		)
 
 
@@ -411,8 +401,8 @@ async def send_unknown_question_message(
 		text: str = None
 ) -> Message:
 	message = await message.reply_text(
-		text or f'❗️К сожалению, я не смог разобрать запрос.\n'
-		        f'Нажмите на интересующий раздел ниже или повторите иначе свой запрос',
+		text or f'⁉️ К сожалению, я не смог разобрать вопрос\n'
+		        f'Выберите раздел в меню или повторите иначе свой запрос',
 		reply_markup=reply_markup
 	)
 	context.chat_data["warn_message_id"] = message.message_id
@@ -422,12 +412,12 @@ async def send_unknown_question_message(
 async def place_new_order_message(message: Message, category: dict = None, text: str = None) -> Message:
 	""" Инлайн сообщение с размещением нового заказа """
 	inline_markup = generate_inline_markup(["➕ Создать"], callback_data="place_order")
-	title = f'Разместить новый заказ'
+	title = f'_Разместить новый заказ_'
 	if category:
-		title += f' в категории {category["name"].upper()}'
+		title += f'_ на бирже в категории_\n*{category["name"].upper()}*'
 
 	return await message.reply_text(
-		f'_{text or title}_',
+		f'{text or title}',
 		reply_markup=inline_markup,
 	)
 
@@ -459,14 +449,14 @@ async def choose_sandbox_message(message: Message, text: str = None) -> Message:
 
 async def failed_questionnaire_message(message: Message) -> Message:
 	return await message.reply_text(
-		text='*Анкетирование было остановлено!*\n',
+		text='*🛑 Анкетирование было остановлено!*\n',
 		reply_markup=start_menu
 	)
 
 
 async def empty_questionnaire_list_message(message: Message) -> Message:
 	return await message.reply_text(
-		text='❗️Вы не выбрали ни одного поставщика\n',
+		text='⚠️ Вы не выбрали ни одного поставщика!',
 		reply_markup=start_menu
 	)
 
@@ -477,8 +467,8 @@ async def offer_for_questionnaire_message(
 ) -> Message:
 	return await message.reply_text(
 		"Анкетирование состоит из двух этапов:\n"
-		"1. Выбор поставщиков с кем доводилось работать, сгруппированных по видам деятельности.\n"
-		"2. Оценка выбранных поставщиков по нескольким критериям.\n\n",
+		"1. _Выбор поставщиков с кем доводилось работать, сгруппированных по видам деятельности._\n"
+		"2. _Оценка выбранных поставщиков по нескольким критериям._\n\n",
 		reply_markup=reply_markup,
 	)
 
@@ -490,7 +480,7 @@ async def show_questionnaire_message(message: Message, text: str = None, link_te
 	)
 
 	return await message.reply_text(
-		text or "Для составления рейтинга поставщиков, предлагаем пройти анкетирование.",
+		text or "❕Для составления рейтинга поставщиков, предлагаем пройти анкетирование.",
 		reply_markup=button,
 	)
 
@@ -530,5 +520,5 @@ async def send_notify_message(
 		if data and data["user_id"]:
 			await context.bot.send_message(
 				chat_id=data["user_id"],
-				text=f'*❗️Уведомление {"от " + from_name if from_name else ""}*\n\n{text}'
+				text=f'*🛎 Уведомление {"от " + from_name if from_name else ""}*\n\n{text}'
 			)

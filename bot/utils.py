@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timedelta
 from enum import Enum
 from functools import wraps
-from typing import Optional, Dict, Union, List, Any, Tuple, Pattern
+from typing import Optional, Dict, Union, List, Any, Tuple, Pattern, Literal
 from urllib.parse import urlencode
 
 import aiohttp
@@ -256,7 +256,7 @@ def generate_inline_markup(
 def update_inline_keyboard(
 		inline_keyboard: Union[List[List[InlineKeyboardButton]], Tuple[Tuple[InlineKeyboardButton]]],
 		active_value: str,
-		button_type: str = "radiobutton",
+		button_type: Literal["checkbox", "radiobutton", "rate"] = "radiobutton",
 ) -> InlineKeyboardMarkup:
 	"""
 	Update an inline keyboard, checking an active button in button list.
@@ -287,23 +287,36 @@ def update_inline_keyboard(
 
 				new_button = InlineKeyboardButton(symbol, callback_data=button.callback_data)
 
-			else:
-				if button.callback_data == active_value:
-					if button_type == 'checkbox':
-						symbol = "☑️"
-						text = f"{button.text} {symbol}" if not button.text.endswith(symbol) else button.text[:-2]
-						new_button = InlineKeyboardButton(text, callback_data=button.callback_data)
+			elif button.callback_data == active_value:
+				if button_type == 'checkbox':
+					new_symbol = "✓ "
+					old_symbol = "▢ "
+					if button.text.startswith(new_symbol):
+						text = old_symbol + button.text[2:]
+					elif button.text.startswith(old_symbol):
+						text = new_symbol + button.text[2:]
 					else:
-						symbol = "🔹"
-						text = f"{symbol}{button.text.strip(symbol)}{symbol}"
-						new_button = InlineKeyboardButton(text, callback_data=button.callback_data)
+						text = f'{new_symbol}{button.text}'
+					new_button = InlineKeyboardButton(text, callback_data=button.callback_data)
 				else:
-					if button_type == 'checkbox':
-						new_button = InlineKeyboardButton(button.text, callback_data=button.callback_data)
-					else:
-						symbol = "🔹"
-						new_button = InlineKeyboardButton(button.text.strip(symbol), callback_data=button.callback_data)
+					new_symbol = "◉ "
+					old_symbol = "◌ "
+					text = f'{new_symbol}{button.text.lstrip(old_symbol)}'
+					new_button = InlineKeyboardButton(text, callback_data=button.callback_data)
 
+			else:
+				if button_type == 'checkbox':
+					selected_symbol = "✓ "
+					symbol = "▢ "
+					text = button.text
+					if not button.text.startswith(symbol) and not button.text.startswith(selected_symbol):
+						text = f'{symbol}{button.text}'
+					new_button = InlineKeyboardButton(text, callback_data=button.callback_data)
+				else:
+					new_symbol = "◌ "
+					old_symbol = "◉ "
+					text = f'{new_symbol}{button.text.lstrip(new_symbol).lstrip(old_symbol)}'
+					new_button = InlineKeyboardButton(text, callback_data=button.callback_data)
 			new_row.append(new_button)
 		new_inline_keyboard.append(new_row)
 

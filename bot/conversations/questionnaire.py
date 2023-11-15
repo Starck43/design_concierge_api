@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import Union
 
 from telegram import Update, Message
 from telegram.ext import (
@@ -11,17 +11,17 @@ from bot.constants.messages import offer_for_questionnaire_message
 from bot.constants.patterns import DONE_PATTERN, CONTINUE_PATTERN, CANCEL_PATTERN, START_QUESTIONNAIRE_PATTERN, \
 	REPEAT_QUESTIONNAIRE_PATTERN
 from bot.handlers.common import user_authorization, create_questionnaire_link
-from bot.handlers.rating import select_rate_callback
 from bot.handlers.done import done
 from bot.handlers.questionnaire import (
 	select_users_callback, confirm_action_callback, continue_questionnaire,
 	cancel_questionnaire, start_questionnaire
 )
+from bot.handlers.rating import select_rate_callback
 from bot.states.questionnaire import QuestState
 from bot.utils import generate_reply_markup
 
 
-async def questionnaire_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+async def questionnaire_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Union[str, int]:
 	"""Начало диалога по команде /questionnaire или сообщении questionnaire"""
 	chat_data = context.chat_data
 	chat_data["previous_state"] = ConversationHandler.END

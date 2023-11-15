@@ -11,8 +11,7 @@ from bot.bot_settings import CHANNEL_ID
 from bot.constants.menus import start_menu
 from bot.constants.messages import denied_access_message, share_files_message
 from bot.constants.patterns import (
-	START_PATTERN, DONE_PATTERN, BACK_PATTERN, PROFILE_PATTERN, COOPERATION_REQUESTS_PATTERN,
-	DESIGNER_PATTERN, SUPPLIERS_SEARCH_PATTERN
+	START_PATTERN, DONE_PATTERN, BACK_PATTERN, PROFILE_PATTERN, COOPERATION_REQUESTS_PATTERN, SUPPLIERS_SEARCH_PATTERN
 )
 from bot.handlers.common import (
 	init_start_section, user_authorization, load_user_field_names, set_priority_group,
@@ -21,18 +20,18 @@ from bot.handlers.common import (
 from bot.handlers.cooperation import cooperation_requests, coop_request_message_callback
 from bot.handlers.done import done
 from bot.handlers.main import (
-	main_menu_choice, select_suppliers_in_cat_callback, show_user_details_callback, user_details_choice,
+	main_menu_choice, show_user_details_callback, user_details_choice,
 	select_events_callback, select_sandbox_callback, new_order_callback, change_supplier_segment_callback,
-	select_outsourcers_in_cat_callback, suppliers_search_choice,
-	recommend_new_user_callback, services_choice, show_order_details_callback,
+	suppliers_search_choice, recommend_new_user_callback, services_choice, show_order_details_callback,
 	select_order_executor_callback, designer_orders_choice, manage_order_callback, remove_order_callback,
-	modify_order_callback, modify_order_fields_choice, add_order_fields_choice
+	modify_order_callback, modify_order_fields_choice, add_order_fields_choice, select_users_in_category_callback
 )
 from bot.handlers.profile import (
 	profile, edit_user_details_callback, modify_user_data_fields_callback, profile_options_choice, choose_tariff_callback
 )
-from bot.handlers.rating import select_rate_callback, answer_rating_questions_callback, \
-	change_rating_callback, show_voted_designers_callback
+from bot.handlers.rating import (
+	select_rate_callback, answer_rating_questions_callback, change_rating_callback, show_voted_designers_callback
+)
 from bot.handlers.upload import upload_files_callback, share_files_callback, share_files
 from bot.logger import log
 from bot.states.group import Group
@@ -191,14 +190,14 @@ main_dialog = ConversationHandler(
 		],
 		MenuState.SUPPLIERS_REGISTER: [
 			suppliers_search_handler,
-			CallbackQueryHandler(select_suppliers_in_cat_callback, pattern=r"^category_\d+$"),
+			CallbackQueryHandler(select_users_in_category_callback, pattern=r"^group_\d+__category_\d+$"),
 			CallbackQueryHandler(show_user_details_callback, pattern=r"^user_\d+$"),
 			# TODO: [task 3]
 			CallbackQueryHandler(recommend_new_user_callback, pattern=r"^add_new_user_\d+$"),
 		],
 		MenuState.SERVICES: [
 			services_handler,
-			CallbackQueryHandler(select_outsourcers_in_cat_callback, pattern=r"^category_\d+$"),
+			CallbackQueryHandler(select_users_in_category_callback, pattern=r"^group_\d+__category_\d+$"),
 			CallbackQueryHandler(show_user_details_callback, pattern=r"^user_\d+$"),
 			CallbackQueryHandler(recommend_new_user_callback, pattern=r"^add_new_user_\d+$"),
 			CallbackQueryHandler(new_order_callback, pattern=r"^place_order$"),
@@ -215,7 +214,7 @@ main_dialog = ConversationHandler(
 		],
 		MenuState.ADD_ORDER: [
 			MessageHandler(filters.TEXT & ~filters.COMMAND, add_order_fields_choice),
-			CallbackQueryHandler(update_category_list_callback, pattern=r'^category_\d+$'),
+			CallbackQueryHandler(update_category_list_callback, pattern=r"^group_\d+__category_\d+$"),
 		],
 		MenuState.MODIFY_ORDER: [
 			MessageHandler(filters.TEXT & ~filters.COMMAND, modify_order_fields_choice),
