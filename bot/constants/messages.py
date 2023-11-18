@@ -9,7 +9,7 @@ from bot.constants.keyboards import (
 	CONFIRM_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SUBMIT_REG_KEYBOARD, CANCEL_REG_KEYBOARD, START_REG_KEYBOARD,
 	SEGMENT_KEYBOARD, REPEAT_KEYBOARD
 )
-from bot.constants.menus import continue_reg_menu, cancel_reg_menu, start_menu, done_menu
+from bot.constants.menus import continue_reg_menu, cancel_reg_menu, start_menu
 from bot.constants.static import CAT_GROUP_DATA
 from bot.utils import (
 	generate_inline_markup, generate_reply_markup, fetch_user_data, update_inline_keyboard
@@ -24,17 +24,12 @@ async def offer_for_registration_message(message: Message, text: str = None) -> 
 
 
 async def denied_access_message(message: Message) -> None:
-	# TODO: Создать логику отправки сообщений администратору
 	inline_markup = generate_inline_markup(
 		["Написать администратору"],
 		callback_data="message_for_admin",
 	)
 	await message.reply_text(
 		f'*Доступ в Консьерж для Дизайнера закрыт!*',
-		reply_markup=done_menu
-	)
-	await message.reply_text(
-		f'Можете задать вопрос администратору сервиса.',
 		reply_markup=inline_markup
 	)
 
@@ -47,7 +42,7 @@ async def submit_reg_data_message(message: Message) -> Message:
 	)
 
 	return await message.reply_text(
-		f'ℹ️ В случае отмены Вам придется заново пройти регистрацию.\n'
+		f'❗ В случае отмены Вам придется заново пройти регистрацию.\n'
 		f'Если захотите что-то изменить, то в будущем у Вас появится такая возможность.\n',
 		reply_markup=inline_markup
 	)
@@ -63,7 +58,7 @@ async def success_registration_message(message: Message) -> None:
 
 async def restricted_registration_message(message: Message) -> None:
 	await message.reply_text(
-		f'*Спасибо за регистрацию!*\n'
+		f'*Спасибо за регистрацию! 🤝*\n'
 		f'_В настоящий момент доступ в Консьерж Сервис ограничен, '
 		f'так как Вы не указали при регистрации ссылку на свои ресурсы\n'
 		f'Вы можете самостоятельно добавить ссылку в своем профиле '
@@ -86,7 +81,7 @@ async def restricted_registration_message(message: Message) -> None:
 
 async def yet_registered_message(message: Message) -> Message:
 	return await message.reply_text(
-		'*Вы уже зарегистрированы!*\n'
+		'*❕Вы уже зарегистрированы!*\n'
 		'Можете начать пользоваться Консьерж Сервис\n',
 		reply_markup=start_menu
 	)
@@ -94,7 +89,7 @@ async def yet_registered_message(message: Message) -> Message:
 
 async def interrupt_reg_message(message: Message, text: str = None) -> None:
 	await message.reply_text(
-		text or "*❌ Регистрация отменена!*\n",
+		text or "*🚫 Регистрация отменена!*\n",
 		reply_markup=ReplyKeyboardRemove()
 	)
 
@@ -356,7 +351,7 @@ async def verify_by_sms_message(message: Message) -> Message:
 	)
 	button = generate_inline_markup([REPEAT_KEYBOARD], callback_data="input_phone")
 	return await message.reply_text(
-		f'_Если смс код не пришел или ошибка в номере, то повторите операцию._',
+		f'❕Если смс код не пришел или ошибка в номере, то повторите операцию.',
 		reply_markup=button,
 	)
 
@@ -364,7 +359,7 @@ async def verify_by_sms_message(message: Message) -> Message:
 async def continue_reg_message(message: Message, text: str = None) -> None:
 	await message.reply_text(
 		text or "Возможно, с Вами свяжутся по указанному номеру, чтобы удостовериться что это именно Вы\n"
-		        "_Нажмите Продолжить для завершения регистрации_",
+		        "Нажмите Продолжить для завершения регистрации",
 		reply_markup=continue_reg_menu
 	)
 
@@ -386,11 +381,11 @@ async def share_files_message(message: Message, text: str) -> Message:
 	return await message.reply_text(text, reply_markup=inline_markup)
 
 
-async def check_file_size_message(message: Message, file: Union[Document, PhotoSize] = None, limit: int = 5) -> Message:
-	if file and file.file_size > limit * 1024 * 1024:  # 5 MB
+async def check_file_size_message(message: Message, limit: int = 5) -> Message:
+	file = message.document or message.photo[-1]
+	if file and file.file_size > limit * 1024 * 1024:
 		return await message.reply_text(
-			f'⚠️ Превышен размер файла!\n'
-			f'_Максимальный размер:_ *5МБ*'
+			f'⚠️ Превышен допустимый размер файла!\n_Максимальный размер:_ *{limit}МБ*'
 		)
 
 

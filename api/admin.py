@@ -17,7 +17,7 @@ from .models import (
 	Rating,
 	Feedback,
 	Order,
-	File,
+	File, Support,
 )
 
 
@@ -208,5 +208,6 @@ admin.site.register(Category, CategoryAdmin)
 # admin.site.register(Outsourcer)
 # admin.site.register(Supplier)
 admin.site.register(Favourite)
+admin.site.register(Support)
 admin.site.register(Feedback)
 admin.site.register(File)

@@ -23,6 +23,7 @@ class MenuState(Enum):
     UPLOAD_FILES: str = 'Отправка прикрепленных файлов'
     PROFILE: str = 'Карточка профиля'
     SETTINGS: str = 'Настройки'
+    SUPPORT: str = 'Техподдержка'
 
     def __str__(self):
         return self.value

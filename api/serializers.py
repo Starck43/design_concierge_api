@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from rest_framework.relations import PrimaryKeyRelatedField
 
-from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rating, Feedback, Order
+from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rating, Feedback, Order, \
+	Support
 from .models import Region, Country
 
 
@@ -207,6 +208,20 @@ class OrderSerializer(serializers.ModelSerializer):
 			order_data['executor_name'] = executor.name or executor.username
 
 		return order_data
+
+
+class SupportSerializer(serializers.ModelSerializer):
+	class Meta:
+		model = Support
+		fields = '__all__'
+
+	def to_representation(self, instance):
+		support_data = super().to_representation(instance)
+		support_data['chat_id'] = instance.user.user_id
+		support_data['username'] = instance.user.username
+		support_data['is_replied'] = bool(instance.answer)
+
+		return support_data
 
 
 class FileUploadSerializer(serializers.Serializer):

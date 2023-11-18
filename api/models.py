@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q, Avg, F, FloatField, Case, When
+from django.utils import timezone
 from rest_framework.authtoken.models import Token
 
 from api.logic import user_directory_path, MediaFileStorage
@@ -462,6 +463,22 @@ class Order(models.Model):
 
 	def __str__(self):
 		return self.title
+
+
+class Support(models.Model):
+	user = models.ForeignKey(User, verbose_name='Автор', on_delete=models.CASCADE, related_name='asked_users')
+	message_id = models.IntegerField('ID сообщения', blank=True)
+	question = models.TextField('Вопрос', blank=True)
+	answer = models.TextField('Ответ', blank=True)
+	created_date = models.DateTimeField('Дата регистрации', auto_now=True)
+	replied_date = models.DateTimeField('Дата ответа', blank=True, null=True, editable=False)
+
+	class Meta:
+		verbose_name = 'Вопрос в техподдержку'
+		verbose_name_plural = 'Вопросы в техподдержку'
+
+	def __str__(self):
+		return self.user.username
 
 
 class File(models.Model):

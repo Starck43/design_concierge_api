@@ -9,7 +9,7 @@ from bot.constants.keyboards import (
 	SUPPLIERS_REGISTER_KEYBOARD, USER_DETAILS_KEYBOARD, BACK_KEYBOARD, TO_TOP_KEYBOARD, DESIGNER_SERVICES_KEYBOARD,
 	OUTSOURCER_SERVICES_KEYBOARD, DESIGNER_AND_OUTSOURCER_SERVICES_KEYBOARD, DESIGNER_SERVICES_ORDERS_KEYBOARD,
 	ORDER_EXECUTOR_KEYBOARD, ORDER_RESPOND_KEYBOARD, ORDER_ACTIONS_KEYBOARD, MODIFY_KEYBOARD, REMOVE_KEYBOARD,
-	CONTINUE_KEYBOARD, CANCEL_KEYBOARD, FAVORITE_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SEGMENT_KEYBOARD
+	CONTINUE_KEYBOARD, CANCEL_KEYBOARD, FAVORITES_ACTIONS_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SEGMENT_KEYBOARD
 )
 from bot.constants.menus import back_menu
 from bot.constants.messages import (
@@ -271,8 +271,7 @@ async def designer_orders_choice(update: Update, context: ContextTypes.DEFAULT_T
 			messages.append(message.message_id)
 
 		# дополним список текущих сообщений архивными
-		section["messages"] += messages
-		update_section(context, messages=section["messages"])
+		update_section(context, messages=section["messages"] + messages)
 
 	else:
 		return await go_back_section(update, context)
@@ -334,7 +333,7 @@ async def user_details_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
 	elif match_query(ADD_FAVOURITE_PATTERN, query_message):
 		_, error_text = await update_favourites(update.message, context, selected_user["id"], method="POST")
 		if not error_text:
-			keyboard[0][0] = FAVORITE_KEYBOARD[1]
+			keyboard[0][0] = FAVORITES_ACTIONS_KEYBOARD[1]
 			menu_markup = generate_reply_markup(keyboard)
 			section.update({"reply_markup": menu_markup})
 			chat_data["selected_user"]["in_favourite"] = True
@@ -354,7 +353,7 @@ async def user_details_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
 	elif match_query(REMOVE_FAVOURITE_PATTERN, query_message):
 		_, error_text = await update_favourites(update.message, context, selected_user["id"], method="DELETE")
 		if not error_text:
-			keyboard[0][0] = FAVORITE_KEYBOARD[0]
+			keyboard[0][0] = FAVORITES_ACTIONS_KEYBOARD[0]
 			menu_markup = generate_reply_markup(keyboard, is_persistent=True)
 			section.update({"reply_markup": menu_markup})
 			chat_data["selected_user"]["in_favourite"] = False
@@ -663,7 +662,7 @@ async def show_user_details_callback(update: Update, context: ContextTypes.DEFAU
 	if supplier_id != user_id and priority_group == Group.DESIGNER:
 		in_favourite = user["in_favourite"]
 		keyboard = USER_DETAILS_KEYBOARD.copy()
-		keyboard[0][0] = FAVORITE_KEYBOARD[int(in_favourite)]
+		keyboard[0][0] = FAVORITES_ACTIONS_KEYBOARD[int(in_favourite)]
 		reply_markup = generate_reply_markup(keyboard)
 
 	title = f'{"✅ " if user["user_id"] else ""}'

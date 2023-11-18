@@ -6,18 +6,19 @@ from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
 from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import (
-	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, RetrieveAPIView
+	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, RetrieveAPIView, ListCreateAPIView
 )
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rating, Region, File, Order, Favourite, Group
+from api.models import Category, User, Rating, Region, File, Order, Favourite, Group, Support
 from .serializers import (
 	CategorySerializer, UserListSerializer, RatingSerializer, RegionSerializer, UserDetailSerializer,
-	FileUploadSerializer, OrderSerializer, FavouriteSerializer
+	FileUploadSerializer, OrderSerializer, FavouriteSerializer, SupportSerializer
 )
 
 
@@ -375,7 +376,8 @@ class OrderDetail(RetrieveUpdateDestroyAPIView):
 				user_id = request.query_params.get('clear_executor')
 				if user_id:
 					instance.executor = None
-					instance.remove_responding_user(user_id)  # удаление существующего исполнителя из списка претендентов
+					instance.remove_responding_user(
+						user_id)  # удаление существующего исполнителя из списка претендентов
 
 				serializer.save()
 
@@ -428,6 +430,41 @@ class UserFieldNamesView(APIView):
 		return Response(field_names)
 
 
+class SupportListView(ListCreateAPIView):
+	serializer_class = SupportSerializer
+
+	def get_queryset(self):
+		user_id = self.kwargs.get('user_id')
+		if user_id:
+			return Support.objects.filter(user__user_id=user_id)
+
+		return Support.objects.all()
+
+
+class SupportDetail(RetrieveUpdateDestroyAPIView):
+	serializer_class = SupportSerializer
+
+	def get_object(self):
+		user_id = self.kwargs['user_id']
+		message_id = self.kwargs['message_id']
+		return get_object_or_404(Support, user__user_id=user_id, message_id=int(message_id))
+
+	def post(self, request, user_id, message_id):
+		user = User.objects.get(user_id=user_id)
+		support, created = Support.objects.get_or_create(user=user, message_id=message_id)
+		serializer = SupportSerializer(support, data=request.data, partial=True)
+		if serializer.is_valid():
+			if created:
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_201_CREATED)
+			else:
+				if support.answer:
+					support.replied_date = timezone.now()
+				serializer.update(support, serializer.validated_data)
+				return Response(serializer.data, status=status.HTTP_200_OK)
+		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 class FileUploadView(APIView):
 	lookup_field = 'user_id'
 
@@ -448,11 +485,11 @@ class FileUploadView(APIView):
 					successfully_saved_files.append(url)
 
 			if len(successfully_saved_files) == len(files):
-				message = 'Все файлы были получены успешно!'
+				message = 'Файлы успешно отправлены!'
 			elif len(successfully_saved_files) > 0:
-				message = 'Только часть файлов была получена!'
+				message = 'Файлы частично отправлены!'
 			else:
-				message = 'Файлы не были получены!'
+				message = 'Ошибка получения файлов!'
 
 			return Response({'message': message, 'saved_files': successfully_saved_files}, status=201)
 

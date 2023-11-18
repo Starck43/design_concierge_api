@@ -12,7 +12,7 @@ from bot.constants.menus import main_menu, done_menu, back_menu
 from bot.constants.messages import (
 	offer_for_registration_message, share_link_message, place_new_order_message, send_unknown_question_message
 )
-from bot.constants.patterns import BACK_PATTERN, BACK_TO_TOP_PATTERN
+from bot.constants.patterns import BACK_PATTERN, BACK_TO_TOP_PATTERN, SUPPORT_PATTERN
 from bot.constants.static import ORDER_STATUS, CAT_GROUP_DATA, ORDER_RELATED_USERS_TITLE
 from bot.entities import TGMessage
 from bot.logger import log
@@ -40,7 +40,10 @@ async def user_authorization(update: Update, context: ContextTypes.DEFAULT_TYPE)
 			return False
 		else:
 			text = "Ошибка авторизации."
-			await catch_server_error(update.message, context, error=res, text=text)
+			if res["status_code"] == 503:
+				text = "Ошибка соединения с сервером."
+			await update.message.reply_text(f'❗️{text}\nПопробуйте зайти в Консьерж Сервис повторно!')
+			await send_error_to_admin(update.message, context, error=res, text=text)
 			return None
 	else:
 		user_data["details"] = res["data"]
@@ -141,16 +144,21 @@ async def go_back_section(
 			pass
 
 	query_message = command or query.message.text
-	if not match_query(BACK_PATTERN, query_message):
+	if match_query(SUPPORT_PATTERN, query_message):
+		return await message_for_admin_callback(update, context)
+
+	elif not match_query(BACK_PATTERN, query_message):
 		section = get_section(context)
 		await send_unknown_question_message(query.message, context, reply_markup=section["reply_markup"])
 		return section["state"]
 
 	current_section = pop_section(context)  # удалим секцию из навигации
-	await delete_messages_by_key(context, "temp_messages")
-	await delete_messages_by_key(context, "warn_message_id")
-	await delete_messages_by_key(context, "last_message_id")
-	await delete_messages_by_key(context, "last_message_ids")
+	leave_local_messages = current_section.get("leave_local_messages", False)
+	if not leave_local_messages:
+		await delete_messages_by_key(context, "temp_messages")
+		await delete_messages_by_key(context, "warn_message_id")
+		await delete_messages_by_key(context, "last_message_id")
+		await delete_messages_by_key(context, "last_message_ids")
 	if current_section:
 		await delete_messages_by_key(context, current_section.get("messages"))
 	chat_data["local_data"] = {}  # обнулим временные сохраненные значения на предыдущем уровне
@@ -162,6 +170,7 @@ async def go_back_section(
 		section_index = level
 	back_section = get_section(context, section_index)
 
+	# print(section_index, "\nback section: ", back_section)
 	# если необходимо перейти в начало меню или не найден уровень раздела для возврата
 	if section_index == 0 or not back_section:
 		section = await init_start_section(context, state=MenuState.START)
@@ -228,6 +237,7 @@ def add_section(
 		query_message: str = None,
 		messages: Union[Message, List[Message], List[int]] = None,
 		callback: Callable = None,
+		leave_local_messages: bool = False,
 		save_full_messages: bool = True,
 		**kwargs
 ) -> dict:
@@ -621,6 +631,45 @@ async def load_user_field_names(
 	return res["data"]
 
 
+async def load_support_data(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		user_id: str = None,
+		message_id: int = None,
+		params: dict = None
+) -> Union[dict, list, None]:
+	if message_id and user_id:
+		res = await fetch_data(f'/supports/{user_id}/{message_id}', params=params or {})
+		data = res["data"] or {}
+	else:
+		res = await fetch_data(f'/supports/{user_id}', params=params or {})
+		data = res["data"] or []
+
+	if res["error"]:
+		text = "Ошибка загрузки вопросов пользователя"
+		await send_error_to_admin(message, context, error=res, text=text)
+		return None
+
+	return data
+
+
+async def update_support_data(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		user_id: int,
+		message_id: int,
+		data: dict = None
+) -> Optional[dict]:
+	res = await fetch_data(f'/supports/{user_id}/{message_id}', data=data, method="POST")
+
+	if res["error"]:
+		text = "Ошибка сохранения вопроса пользователя"
+		await send_error_to_admin(message, context, error=res, text=text)
+		return None
+
+	return res["data"]
+
+
 async def load_favourites(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Tuple[List[dict], str]:
 	user_details = context.user_data["details"]
 
@@ -1000,11 +1049,11 @@ async def catch_server_error(
 	error_title = text or f'{error_data["error_code"]}: {error_data["error_text"]}\n'
 	if auto_send_notification:
 		await send_error_to_admin(message, context, error=error_data, text=error_title)
-		error_text = "Администратор уже проинформирован о Вашей проблеме.\nПопробуйте повторить или зайдите позже."
+		error_text = "Администратор уже проинформирован о проблеме.\nПопробуйте повторить позже."
 		markup = generate_inline_markup(["Отправить"], callback_data="send_error")
 
 	else:
-		error_text = "Просьба поделиться проблемой с администратором Консьерж Сервис."
+		error_text = "Можете поделиться ошибкой с администратором Консьерж Сервис."
 		markup = reply_markup
 
 	reply_message = await message.reply_text(
@@ -1034,9 +1083,9 @@ async def send_error_to_admin(
 	chat_data = context.chat_data
 	section = get_section(context)
 	error_data = {
-		"chat_id": chat_data["chat_id"],
-		"bot_status": chat_data["status"],
-		"state": section["state"],
+		"chat_id": chat_data.get("chat_id"),
+		"bot_status": chat_data.get("status"),
+		"state": section.get("state"),
 		"query_message": section.get("query_message", None),
 		"callback": section.get("callback", None),
 	}
@@ -1065,9 +1114,10 @@ async def send_error_to_admin(
 
 async def send_error_message_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	# TODO: Необходимо протестировать!!!
-	query = update.callback_query
 
+	query = update.callback_query
 	await query.answer()
+
 	chat_data = context.chat_data
 	error_code = str(chat_data["status_code"])
 	error_message = {
@@ -1084,3 +1134,21 @@ async def send_error_message_callback(update: Update, context: ContextTypes.DEFA
 	             f"Сообщение уже отправлено администратору Консьерж Сервис\n" \
 	             f"Приносим свои извинения за предоставленные неудобства."
 	await context.bot.send_message(chat_id=user_chat_id, text=error_text)
+
+
+async def message_for_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+	query = update.callback_query
+	if query:
+		await query.answer()
+	else:
+		query = update
+
+	chat_data = context.chat_data
+	state = MenuState.SUPPORT
+
+	message = await query.message.reply_text(
+		"О чем Вы хотели сообщить нам?"
+	)
+
+	return state

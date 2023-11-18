@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from telegram import Update
 from telegram.ext import (
@@ -15,7 +15,8 @@ from bot.constants.patterns import (
 )
 from bot.handlers.common import (
 	init_start_section, user_authorization, load_user_field_names, set_priority_group,
-	invite_user_to_chat, is_user_chat_member, go_back_section, update_category_list_callback, delete_messages_by_key
+	invite_user_to_chat, is_user_chat_member, go_back_section, update_category_list_callback, delete_messages_by_key,
+	message_for_admin_callback
 )
 from bot.handlers.cooperation import cooperation_requests, coop_request_message_callback
 from bot.handlers.done import done
@@ -27,19 +28,24 @@ from bot.handlers.main import (
 	modify_order_callback, modify_order_fields_choice, add_order_fields_choice, select_users_in_category_callback
 )
 from bot.handlers.profile import (
-	profile, edit_user_details_callback, modify_user_data_fields_callback, profile_options_choice, choose_tariff_callback
+	profile_menu_choice, profile_sections_choice, edit_user_details_callback, modify_user_data_fields_callback,
+	choose_tariff_callback
 )
 from bot.handlers.rating import (
 	select_rate_callback, answer_rating_questions_callback, change_rating_callback, show_voted_designers_callback
 )
-from bot.handlers.upload import upload_files_callback, share_files_callback, share_files
+from bot.handlers.support import (
+	ask_question_to_admin_choice,
+	reply_to_user_message_callback
+)
+from bot.handlers.upload import prepare_shared_files, upload_files_callback, share_files_callback
 from bot.logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import determine_greeting, generate_inline_markup
 
 
-async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Union[str, int]:
 	"""Начало диалога по команде /start или сообщении start"""
 
 	await delete_messages_by_key(context, "last_message_id")
@@ -127,9 +133,9 @@ main_menu_handler = MessageHandler(
 	main_menu_choice
 )
 
-profile_handler = MessageHandler(
+profile_menu_handler = MessageHandler(
 	filters.TEXT & ~filters.COMMAND & filters.Regex(re.compile(PROFILE_PATTERN, re.I)),
-	profile
+	profile_menu_choice
 )
 
 services_handler = MessageHandler(
@@ -137,9 +143,9 @@ services_handler = MessageHandler(
 	services_choice
 )
 
-profile_options_choice_handler = MessageHandler(
+profile_sections_handler = MessageHandler(
 	filters.TEXT & ~filters.COMMAND,
-	profile_options_choice
+	profile_sections_choice
 )
 
 user_details_handler = MessageHandler(
@@ -184,7 +190,7 @@ main_dialog = ConversationHandler(
 	states={
 		MenuState.START: [
 			done_handler,
-			profile_handler,
+			profile_menu_handler,
 			# cooperation_requests_handler, # в стадии будущего обсуждения
 			main_menu_handler,
 		],
@@ -229,10 +235,14 @@ main_dialog = ConversationHandler(
 		],
 		MenuState.PROFILE: [
 			# TODO: [task 5]
-			profile_options_choice_handler,
+			profile_sections_handler,
 			CallbackQueryHandler(edit_user_details_callback, pattern=r"^modify_user_details"),
 			CallbackQueryHandler(modify_user_data_fields_callback, pattern=r"^modify_user_field_"),
 			CallbackQueryHandler(change_supplier_segment_callback, pattern=r'user_\d+$__segment_\d+$'),
+		],
+		MenuState.SUPPORT: [
+			# TODO: в разработке
+			MessageHandler(filters.TEXT & ~filters.COMMAND, ask_question_to_admin_choice),
 		],
 		MenuState.SETTINGS: [
 			# TODO: разработать структуру настроек
@@ -260,10 +270,12 @@ main_dialog = ConversationHandler(
 	},
 	fallbacks=[
 		back_handler,
-		MessageHandler(filters.PHOTO, share_files),
-		MessageHandler(filters.ATTACHMENT, share_files),
+		MessageHandler(filters.PHOTO, prepare_shared_files),
+		MessageHandler(filters.ATTACHMENT, prepare_shared_files),
+		CallbackQueryHandler(message_for_admin_callback, pattern=r"^message_for_admin"),
 		CallbackQueryHandler(upload_files_callback, pattern=r"^upload_files$"),
 		CallbackQueryHandler(share_files_callback, pattern=r"^share_files$"),
+		CallbackQueryHandler(reply_to_user_message_callback, pattern=r"^reply_to_\d+__message_id_\d+$"),
 	]
 )
 
