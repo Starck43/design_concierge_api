@@ -15,7 +15,7 @@ class MenuState(Enum):
     DESIGNER_SANDBOX: str = 'Барахолка'
     USER_DETAILS: str = "Карточка организации"
     USER_RATE: str = 'Обновить рейтинг'
-    SUPPLIERS_SEARCH: str = 'Поиск поставщика'
+    USERS_SEARCH: str = 'Подбор поставщика'
     TARIFF_CHANGE: str = 'Изменение тарифа'
     FAVOURITES: str = 'Избранное'
     SUPPLIERS_FAVOURITES: str = 'Избранные поставщики'

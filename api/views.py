@@ -5,7 +5,7 @@ import requests
 from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F
+from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F, Count
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
@@ -38,29 +38,25 @@ class CategoryList(ListAPIView):
 
 	def get_queryset(self):
 		queryset = super().get_queryset()
-		groups = self.request.query_params.getlist('group')
-		related_users = self.request.query_params.get('related_users')
-		region = self.request.query_params.get('region')
+		groups = self.request.query_params.getlist('groups')
+		exclude_empty = self.request.query_params.get('exclude_empty')
+		regions = self.request.query_params.getlist('regions')
 
-		# Check if any of the parameters are present
-		if groups or related_users or region:
-			# Create an empty Q object to hold the filters
+		if groups or exclude_empty or regions:
 			q = Q()
-
 			if groups:
-				groups = list(map(int, groups))
+				# groups = list(map(int, groups))
 				q &= Q(group__in=groups)
 
-			if related_users:
-				users_filter = Q(users__isnull=False)
-				if region:
-					users_filter &= Q(user_region_id=region)
-				q &= users_filter
+			if exclude_empty and not str(exclude_empty).lower() == "false":
+				q &= Q(users__isnull=False)
 
-			# Apply the filters to the queryset
-			queryset = queryset.filter(q).distinct()
+			if regions:
+				q &= Q(users__main_region_id__in=regions)
 
-		return queryset
+			queryset = queryset.filter(q).annotate(user_count=Count('users')).distinct()
+
+		return queryset.annotate(user_count=Count('users'))
 
 
 class CategoryDetail(RetrieveAPIView):
@@ -495,3 +491,38 @@ class FileUploadView(APIView):
 
 		else:
 			return Response(serializer.errors, status=400)
+
+
+class UserSearchView(APIView):
+	def get(self, request):
+		query_params = request.query_params
+
+		categories = query_params.getlist('categories', [])
+		total_rating = query_params.get('rating', None)
+		segment = query_params.get('segment', None)
+		keywords = query_params.get('keywords', None)
+
+		_AND = Q()
+
+		if categories:
+			_AND &= Q(categories__in=categories)
+
+		if total_rating:
+			_AND &= Q(total_rating__gte=total_rating)
+
+		if segment:
+			_AND &= Q(segment=segment)
+
+		if keywords:
+			keywords_list = keywords.split(",")
+			_OR = Q()
+			for keyword in keywords_list:
+				_OR |= (Q(name__icontains=keyword) | Q(username__icontains=keyword)) | Q(keywords__icontains=keyword)
+				_OR |= Q(description__icontains=keyword) | Q(address__icontains=keyword)
+				_OR |= Q(categories__name__icontains=keyword) | Q(categories__keywords__icontains=keyword)
+				_OR |= Q(site_url__icontains=keyword)
+			_AND &= Q(_OR)
+
+		queryset = User.objects.filter(_AND).distinct()
+		serializer = UserListSerializer(queryset, many=True)
+		return Response(serializer.data)

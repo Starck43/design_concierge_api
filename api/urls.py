@@ -3,7 +3,7 @@ from django.urls import path
 from .views import (
 	RatingQuestionsView, CategoryList, CategoryDetail, UserList, UserDetail, UpdateRatingView, RegionList, RegionDetail,
 	UserFieldNamesView, FileUploadView, OrderListView, OrderDetail, RatingListView, FavouriteListView,
-	UpdateFavouriteView, SupportListView, SupportDetail
+	UpdateFavouriteView, SupportListView, SupportDetail, UserSearchView
 )
 
 urlpatterns = [
@@ -30,6 +30,8 @@ urlpatterns = [
 	path('supports/', SupportListView.as_view()),
 	path('supports/<str:user_id>/', SupportListView.as_view()),
 	path('supports/<str:user_id>/<int:message_id>/', SupportDetail.as_view()),
+
+	path('search/', UserSearchView.as_view(), name='user-search'),
 
 	# path('regions/', RegionList.as_view(), name='region-list'),
 	path('user_field_names/', UserFieldNamesView.as_view(), name='user-field-names'),
@@ -74,5 +76,6 @@ urlpatterns = [
 # supports/<user_id>/ (GET) - получение списка вопросов в поддержку от пользователя user_id
 # supports/<user_id>/<message_id>/ (GET, POST, DELETE) - получение, обновление и удаление вопроса
 # из поддержки по message_id и user_id
+
 
 # user_field_names/ (GET) - получение имен полей данных пользователя

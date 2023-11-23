@@ -8,13 +8,13 @@ from bot.constants.static import TARIFF_LIST, PROFILE_FIELD_SET
 from bot.constants.menus import profile_menu, back_menu
 from bot.constants.patterns import TARIFF_PATTERN, FAVOURITE_PATTERN, SETTINGS_PATTERN, SUPPORT_PATTERN
 from bot.handlers.common import (
-	edit_or_reply_message, prepare_current_section, add_section, go_back_section, build_inline_username_buttons,
+	edit_or_reply_message, prepare_current_section, add_section, go_back_section, generate_users_list,
 	load_favourites
 )
 from bot.handlers.details import show_user_card_message
 from bot.states.group import Group
 from bot.states.main import MenuState
-from bot.utils import generate_reply_markup, generate_inline_markup, update_inline_keyboard, match_query
+from bot.utils import generate_reply_markup, generate_inline_markup, update_inline_markup, match_query
 
 
 async def profile_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
@@ -82,7 +82,7 @@ async def profile_sections_choice(update: Update, context: ContextTypes.DEFAULT_
 
 		else:
 			subtitle = "Список поставщиков:"
-			inline_markup = build_inline_username_buttons(users)
+			inline_markup = generate_users_list(users)
 			inline_message = await update.message.reply_text(subtitle, reply_markup=inline_markup)
 
 		messages.extend([message, inline_message])
@@ -92,25 +92,24 @@ async def profile_sections_choice(update: Update, context: ContextTypes.DEFAULT_
 		state = MenuState.TARIFF_CHANGE
 		inline_markup = generate_inline_markup(TARIFF_LIST, callback_data_prefix="tariff_", vertical=True)
 
-		message = await edit_or_reply_message(
-			update.message,
+		reply_message = await edit_or_reply_message(
+			context,
 			text=f'*Текущий тариф*: `{tariff.upper()}`',
-			message_id=chat_data.get("last_message_id"),
+			message=chat_data.get("last_message_id"),
 			reply_markup=menu_markup
 		)
-		chat_data["last_message_id"] = message.message_id
 
 		inline_message = await update.message.reply_text(f'Выберите тариф:', reply_markup=inline_markup)
-		messages.extend([message, inline_message])
+		messages.extend([reply_message, inline_message])
 
 	# Подраздел - НАПИСАТЬ В ПОДДЕРЖКУ
 	elif match_query(SUPPORT_PATTERN, query_message):
 		state = MenuState.SUPPORT
 		title = str(state).upper()
 		context.chat_data["local_data"] = {'message_for_admin': {"chat_id": update.effective_chat.id, "question": ""}}
-		message = await update.message.reply_text(f'*{title}*', reply_markup=menu_markup)
+		reply_message = await update.message.reply_text(f'*{title}*', reply_markup=menu_markup)
 		inline_message = await update.message.reply_text(f'Задайте свой вопрос')
-		messages.extend([message, inline_message])
+		messages.extend([reply_message, inline_message])
 
 	# Подраздел - НАСТРОЙКИ
 	elif match_query(SETTINGS_PATTERN, query_message):
@@ -168,20 +167,19 @@ async def edit_user_details_callback(update: Update, context: ContextTypes.DEFAU
 			field_keys.append(key)
 			field_names.append(value)
 
-	field_buttons = generate_inline_markup(
+	inline_markup = generate_inline_markup(
 		[field_names],
 		callback_data=[field_keys],
 		callback_data_prefix="modify_user_field_",
 		vertical=True
 	)
 
-	message = await edit_or_reply_message(
-		query.message,
+	context.chat_data["last_message_id"] = await edit_or_reply_message(
+		context,
 		text="Выберите поле для изменения:",
-		message_id=last_message_id,
-		reply_markup=field_buttons
+		message=last_message_id,
+		reply_markup=inline_markup
 	)
-	context.chat_data["last_message_id"] = message.message_id
 
 
 async def modify_user_data_fields_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -210,11 +208,6 @@ async def choose_tariff_callback(update: Update, context: ContextTypes.DEFAULT_T
 	await query.answer()
 	button_data = int(query.data.lstrip("tariff_"))
 	tariff = TARIFF_LIST[button_data]
-	updated_keyboard = update_inline_keyboard(
-		query.message.reply_markup.inline_keyboard,
-		active_value=query.data,
-		# button_type='radiobutton'
-	)
 	current_access = context.user_data["details"]["access"]
 
 	if current_access == button_data:
@@ -224,6 +217,9 @@ async def choose_tariff_callback(update: Update, context: ContextTypes.DEFAULT_T
 	else:
 		text = f'✅ Выбран тариф *{tariff.upper()}*\n_Для перехода на этот тариф необходимо внести оплату._'
 
+	keyboard = query.message.reply_markup.inline_keyboard
+	updated_keyboard = update_inline_markup(keyboard, active_value=query.data, button_type='radiobutton')
 	await query.message.edit_text(text=text, reply_markup=updated_keyboard)
+
 	# сохраним предварительно выбранный тариф и id сообщения во временную переменную. Очищать после подтверждения
 	context.chat_data["selected_tariff"] = button_data

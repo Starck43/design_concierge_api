@@ -1,18 +1,20 @@
-from typing import List, Optional, Union, Literal
+from asyncio import sleep
+from typing import Optional, Union, Literal
 
 from telegram import (
-	Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Document, PhotoSize
+	Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 )
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import (
 	CONFIRM_KEYBOARD, DESIGNER_SANDBOX_KEYBOARD, SUBMIT_REG_KEYBOARD, CANCEL_REG_KEYBOARD, START_REG_KEYBOARD,
-	SEGMENT_KEYBOARD, REPEAT_KEYBOARD
+	SEGMENT_KEYBOARD, REPEAT_KEYBOARD, SEARCH_OPTIONS_KEYBOARD, CONTINUE_KEYBOARD
 )
 from bot.constants.menus import continue_reg_menu, cancel_reg_menu, start_menu
-from bot.constants.static import CAT_GROUP_DATA
+from bot.constants.static import CAT_GROUP_DATA, MAX_RATE, RATE_BUTTONS
 from bot.utils import (
-	generate_inline_markup, generate_reply_markup, fetch_user_data, update_inline_keyboard
+	generate_inline_markup, generate_reply_markup, fetch_user_data, update_inline_markup
 )
 
 
@@ -87,11 +89,8 @@ async def yet_registered_message(message: Message) -> Message:
 	)
 
 
-async def interrupt_reg_message(message: Message, text: str = None) -> None:
-	await message.reply_text(
-		text or "*🚫 Регистрация отменена!*\n",
-		reply_markup=ReplyKeyboardRemove()
-	)
+async def interrupt_reg_message(message: Message, text: str = None) -> Message:
+	return await message.reply_text(text or "*🚫 Регистрация отменена!*\n", reply_markup=ReplyKeyboardRemove())
 
 
 async def share_link_message(message: Message, link: str, link_text: str, text: str) -> None:
@@ -99,192 +98,45 @@ async def share_link_message(message: Message, link: str, link_text: str, text: 
 	await message.reply_text(text, reply_markup=inline_markup)
 
 
-async def show_categories_message(
+async def input_regions_message(
 		message: Message,
-		category_list: List[dict],
-		group: int = None,
-		title: str = None,
-		button_type: Optional[Literal["checkbox", "radiobutton"]] = None
-) -> Message:
-
-	inline_markup = generate_inline_markup(
-		category_list,
-		item_key="name",
-		callback_data="id",
-		callback_data_prefix=f"group_{group}__category_" if group else "category_",
-		vertical=True
-	)
-
-	if button_type:
-		inline_markup = update_inline_keyboard(
-			inline_keyboard=inline_markup.inline_keyboard,
-			active_value="",
-			button_type=button_type
-		)
-
-	return await message.reply_text(
-		title or 'Список категорий:',
-		reply_markup=inline_markup,
-	)
-
-
-async def required_category_warn_message(
-		message: Message,
-		context: ContextTypes.DEFAULT_TYPE,
+		status: Literal["main", "additional"] = "additional",
 		reply_markup: Optional[ReplyKeyboardMarkup] = None,
-		text: str = None
-) -> Message:
-	message = await message.reply_text(
-		text or "⚠️ Необходимо выбрать хотя бы одну категорию!",
-		reply_markup=reply_markup,
-	)
-	context.chat_data["warn_message_id"] = message.message_id
-	return message
+) -> int:
+	if not reply_markup:
+		reply_markup = generate_reply_markup([CONTINUE_KEYBOARD], one_time_keyboard=False, share_location=True)
 
-
-async def only_in_list_warn_message(
-		message: Message,
-		context: ContextTypes.DEFAULT_TYPE,
-		reply_markup: Optional[ReplyKeyboardMarkup] = None,
-		text: str = None
-) -> Message:
-	message = await message.reply_text(
-		text or '⚠️ Можно выбрать категорию только из списка!\n',
-		reply_markup=reply_markup,
-	)
-	context.chat_data["warn_message_id"] = message.message_id
-	return message
-
-
-async def not_validated_warn_message(
-		message: Message,
-		context: ContextTypes.DEFAULT_TYPE,
-		reply_markup: Optional[ReplyKeyboardMarkup] = None,
-		text: str = None
-) -> Message:
-	message = await message.reply_text(
-		text or "❗️Ответ должен обязательно содержать число\n",
-		reply_markup=reply_markup,
-	)
-	context.chat_data["warn_message_id"] = message.message_id
-	return message
-
-
-async def show_main_region_message(message: Message, text: str = None) -> Message:
-	reply_markup = generate_reply_markup(
-		[CANCEL_REG_KEYBOARD],
-		one_time_keyboard=False,
-		share_location=True
-	)
-
-	return await message.reply_text(
-		text or "Укажите свой основной регион или поделитесь местоположением для автоопределения.",
-		reply_markup=reply_markup,
-	)
-
-
-async def show_additional_regions_message(message: Message) -> Message:
-	return await message.reply_text(
-		text="Добавьте дополнительные регионы в которых Вы, возможно, работаете и нажмите *Продолжить*",
-		reply_markup=continue_reg_menu
-	)
-
-
-async def added_new_region_message(message: Message, text: str) -> None:
-	await message.reply_text(
-		f'☑️ _{text.upper()} добавлен!_',
-		reply_markup=continue_reg_menu
-	)
-
-
-async def update_top_regions_message(context: ContextTypes.DEFAULT_TYPE) -> None:
-	chat_data = context.chat_data
-	top_regions_list = chat_data["top_regions"]
-
-	if not top_regions_list:
-		if "last_message_id" in chat_data:
-			await context.bot.delete_message(
-				chat_id=chat_data["chat_id"],
-				message_id=chat_data["last_message_id"],
-			)
-
-			del chat_data["last_message_id"]
-		return
-
-	inline_markup = generate_inline_markup(
-		top_regions_list,
-		item_key="name",
-		callback_data="id",
-		callback_data_prefix="region_"
-	)
-
-	if "last_message_id" not in chat_data:
-		message = await context.bot.send_message(
-			chat_id=chat_data["chat_id"],
-			text=f'Можете выбрать регион из списка ниже или ввести свой:',
-			reply_markup=inline_markup,
-		)
-		chat_data["last_message_id"] = message.message_id  # Сохраним для изменения сообщения
-
+	if status == "main":
+		text = "Введите свой основной рабочий регион или воспользуйтесь автоопределением."
 	else:
-		await context.bot.edit_message_reply_markup(
-			chat_id=chat_data["chat_id"],
-			message_id=chat_data["last_message_id"],
-			reply_markup=inline_markup
-		)
+		text = "Если есть другие регионы где вы представлены, то введите их и/или нажмите *Продолжить*"
+
+	message = await message.reply_text(text, reply_markup=reply_markup)
+	return message.message_id
 
 
-async def confirm_region_message(message: Message, text: str = None) -> Message:
+async def confirm_region_message(message: Message, text: str = None) -> int:
 	inline_markup = generate_inline_markup(
 		[CONFIRM_KEYBOARD],
 		callback_data=["yes", "no"],
 		callback_data_prefix="choose_region_"
 	)
-	return await message.reply_text(
-		f'{text}, все верно❔',
-		reply_markup=inline_markup
-	)
+	message = await message.reply_text(text, reply_markup=inline_markup)
+	return message.message_id
 
 
-async def region_selected_warn_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
+async def add_region_warn_message(message: Message, text: str = None) -> int:
+	message = await message.reply_text(f'⚠️ Регион *{text}* уже был добавлен!', reply_markup=continue_reg_menu)
+	return message.message_id
+
+
+async def not_found_region_message(message: Message, text: str = None) -> int:
 	message = await message.reply_text(
-		f'⚠️ *{text}* был уже выбран!\n',
-		reply_markup=continue_reg_menu,
-	)
-	context.chat_data["warn_message_id"] = message.message_id
-
-
-async def not_found_region_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
-	message = await message.reply_text(
-		f"⚠️ Регион с названием '{text or message.text}' не найден!\n"
+		f"⚠️ Регион с названием *{text}* не найден!\n"
 		f"Введите корректное название региона.\n",
 		reply_markup=continue_reg_menu,
 	)
-	context.chat_data["warn_message_id"] = message.message_id
-
-
-async def not_detected_region_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
-	message = await message.reply_text(
-		text or "❕Не удалось определить местоположение.\n"
-		        "Введите регион самостоятельно.",
-		reply_markup=continue_reg_menu,
-	)
-	context.chat_data["warn_message_id"] = message.message_id
-
-
-async def required_region_warn_message(message: Message, context: ContextTypes.DEFAULT_TYPE, text: str = None) -> None:
-	message = await message.reply_text(
-		text or '⚠️ Необходимо указать хотя бы один регион!',
-		reply_markup=cancel_reg_menu,
-	)
-	context.chat_data["warn_message_id"] = message.message_id
-
-
-async def offer_to_input_socials_message(message: Message, text: str = None) -> None:
-	await message.reply_text(
-		text or '🌐 Укажите свой сайт/соцсеть или другой ресурс, где можно увидеть ваши проекты',
-		reply_markup=continue_reg_menu,
-	)
+	return message.message_id
 
 
 async def incorrect_socials_warn_message(message: Message) -> None:
@@ -294,17 +146,26 @@ async def incorrect_socials_warn_message(message: Message) -> None:
 	)
 
 
-async def offer_to_select_segment_message(message: Message) -> Message:
-	buttons = generate_inline_markup(
-		SEGMENT_KEYBOARD,
-		callback_data_prefix="segment_",
-		vertical=True
-	)
-
+async def offer_to_select_segment_message(message: Message, title: str = None) -> Message:
+	buttons = generate_inline_markup(SEGMENT_KEYBOARD, callback_data_prefix="segment_", vertical=True)
 	return await message.reply_text(
-		"🎯 Выберите сегмент, в котором Вы работаете:",
+		f'🎯 {title or "Выберите сегмент, в котором Вы работаете"}:',
 		reply_markup=buttons
 	)
+
+
+async def offer_to_select_rating_message(message: Message, title: str = None, active_value: int = None) -> Message:
+	buttons = [[RATE_BUTTONS[3]] * MAX_RATE]
+	callback_data = list(range(1, MAX_RATE + 1))
+	rate_markup = generate_inline_markup(buttons, callback_data=callback_data, callback_data_prefix="rating_")
+	if active_value:
+		rate_markup = update_inline_markup(
+			inline_keyboard=rate_markup.inline_keyboard,
+			active_value=str(active_value),
+			button_type='rate'
+		)
+	title = f'⭐️ {title or "Выберите рейтинг"}:'
+	return await message.reply_text(title, reply_markup=rate_markup)
 
 
 async def offer_to_input_address_message(message: Message) -> Message:
@@ -344,22 +205,18 @@ async def add_new_user_message(message: Message, category: dict) -> Message:
 	)
 
 
-async def verify_by_sms_message(message: Message) -> Message:
-	await message.reply_text(
-		"Введите полученный код из смс:",
-		reply_markup=cancel_reg_menu,
-	)
-	button = generate_inline_markup([REPEAT_KEYBOARD], callback_data="input_phone")
+async def repeat_input_phone_message(message: Message) -> Message:
+	inline_markup = generate_inline_markup([REPEAT_KEYBOARD], callback_data="input_phone")
+
 	return await message.reply_text(
-		f'❕Если смс код не пришел или ошибка в номере, то повторите операцию.',
-		reply_markup=button,
+		f'❕Если смс код не пришел или ошиблись в наборе номера, то повторите операцию',
+		reply_markup=inline_markup
 	)
 
 
-async def continue_reg_message(message: Message, text: str = None) -> None:
-	await message.reply_text(
-		text or "Возможно, с Вами свяжутся по указанному номеру, чтобы удостовериться что это именно Вы\n"
-		        "Нажмите Продолжить для завершения регистрации",
+async def continue_reg_message(message: Message, text: str = None) -> Message:
+	return await message.reply_text(
+		text or "Нажмите ➡️ для завершения регистрации",
 		reply_markup=continue_reg_menu
 	)
 
@@ -367,9 +224,8 @@ async def continue_reg_message(message: Message, text: str = None) -> None:
 async def offer_to_cancel_action_message(message: Message, text: str = None) -> Message:
 	inline_markup = generate_inline_markup([CONFIRM_KEYBOARD], callback_data=["yes", "no"])
 	return await message.reply_text(
-		text or '*❗Несохраненные данные будут утеряны*\n'
-		        'Все равно продолжить?',
-		reply_markup=inline_markup,
+		text or '*⁉️ Несохраненные данные будут утеряны*\nВсе равно продолжить?',
+		reply_markup=inline_markup
 	)
 
 
@@ -414,6 +270,18 @@ async def place_new_order_message(message: Message, category: dict = None, text:
 	return await message.reply_text(
 		f'{text or title}',
 		reply_markup=inline_markup,
+	)
+
+
+async def select_search_options_message(message: Message, cat_group: int) -> Message:
+	keyboard = SEARCH_OPTIONS_KEYBOARD
+	if cat_group != 2:
+		keyboard = SEARCH_OPTIONS_KEYBOARD.copy()[:-1]
+
+	inline_markup = generate_inline_markup(keyboard, vertical=True)
+	return await message.reply_text(
+		"🖍 Введите поисковые слова и/или выберите опции из списка:",
+		reply_markup=inline_markup
 	)
 
 

@@ -13,8 +13,8 @@ from bot.handlers.common import (
 	edit_or_reply_message, send_error_to_admin, catch_server_error, delete_messages_by_key, get_section, load_user
 )
 from bot.utils import (
-	fetch_user_data, fetch_data, find_obj_in_dict, update_inline_keyboard, generate_inline_markup,
-	format_output_text, send_action, update_text_by_keyword, data_list_to_string
+	fetch_user_data, fetch_data, find_obj_in_dict, update_inline_markup, generate_inline_markup,
+	format_output_text, send_action, update_text_by_keyword, data_to_string
 )
 
 
@@ -32,12 +32,12 @@ async def validate_rated_user(message: Message, context: ContextTypes.DEFAULT_TY
 	text = ""
 
 	if not questions:
-		text = "Ошибка проверки результата выставленной оценки."
+		text = "Ошибка проверки результата выставленной оценки"
 		await send_error_to_admin(message, context, error=user, text=text)
 		is_success = None
 
 	elif user["id"] == author["id"]:
-		text = 'Нельзя выставлять оценки самому себе.'
+		text = 'Нельзя выставлять оценки самому себе'
 		is_success = False
 
 	else:
@@ -54,8 +54,8 @@ async def validate_rated_user(message: Message, context: ContextTypes.DEFAULT_TY
 			is_success = True
 
 	if not is_success:
-		_message = await edit_or_reply_message(message, text=f'⚠️ {text}', message_id=warn_message_id)
-		chat_data["warn_message_id"] = _message.message_id
+		message_id = await edit_or_reply_message(context, text=text, message=warn_message_id, message_type="warn")
+		chat_data["warn_message_id"] = message_id
 
 	return is_success
 
@@ -149,19 +149,19 @@ async def show_user_rating_questions(
 
 	await delete_messages_by_key(context, "last_message_ids")
 	last_message_ids = chat_data.setdefault("last_message_ids", {})
-	message = await edit_or_reply_message(
-		message,
+	last_message_ids["rating_title"] = await edit_or_reply_message(
+		context,
 		text=title,
-		message_id=chat_data.get("last_message_id"),
+		message=chat_data.get("last_message_id"),
 		reply_markup=reply_markup
 	)
-	last_message_ids["rating_title"] = message.message_id
 
 	for i, question in enumerate(question_list, 1):
 		current_rate = int(user_detail_rating.get(question) or 0)
 		subtitle = f'{i}. *{rating_questions[question]}* ({current_rate}/{MAX_RATE})'
 		callback_data = [f'rate__{selected_user["id"]}__{question}__{rate}' for rate in range(1, MAX_RATE + 1)]
 
+		# если это последняя кнопка рейтинга, то добавим в конец кнопку сохранения рейтинга
 		if save_button_data and i == len(question_list):
 			buttons += [save_button_data[0]]
 			callback_data += [save_button_data[1]]
@@ -170,7 +170,7 @@ async def show_user_rating_questions(
 
 		# если у пользователя есть выставленный рейтинг, то обновим клавиатуру
 		if user_detail_rating:
-			rate_markup = update_inline_keyboard(
+			rate_markup = update_inline_markup(
 				inline_keyboard=rate_markup.inline_keyboard,
 				active_value=str(current_rate),
 				button_type='rate'
@@ -208,13 +208,12 @@ async def show_total_detail_rating(message: Message, context: ContextTypes.DEFAU
 			callback_data = [callback_data, "update_rating"]
 
 	inline_markup = generate_inline_markup(buttons, callback_data=callback_data, vertical=True)
-	_message = await edit_or_reply_message(
-		message,
+	temp_messages["related_user_rating"] = await edit_or_reply_message(
+		context,
 		text=rating_text,
-		message_id=temp_messages.get("related_user_rating"),
+		message=temp_messages.get("related_user_rating"),
 		reply_markup=inline_markup
 	)
-	temp_messages["related_user_rating"] = _message.message_id
 
 
 @send_action(ChatAction.TYPING)
@@ -284,12 +283,9 @@ async def select_rate_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 	# изменим заголовок вопроса и его кнопки
 	title = re.sub(r"\d+/", r"{}/".format(active_value), query.message.text_markdown)
-	rate_markup = update_inline_keyboard(
-		query.message.reply_markup.inline_keyboard,
-		active_value=active_value,
-		button_type='rate'
-	)
 
+	keyboard = query.message.reply_markup.inline_keyboard
+	rate_markup = update_inline_markup(keyboard, active_value=active_value, button_type='rate')
 	await query.message.edit_text(title, reply_markup=rate_markup)
 
 
@@ -332,9 +328,10 @@ async def change_rating_callback(update: Update, context: ContextTypes.DEFAULT_T
 		replacement=f'*{user["name"]} ⭐{user["total_rating"]}*'
 	)
 	message = await edit_or_reply_message(
-		query.message,
-		message_id=user_details_message.message_id,
-		text=modified_text
+		context,
+		text=modified_text,
+		message=user_details_message.message_id,
+		return_only_id=False
 	)
 	section["messages"].insert(1, TGMessage.create_message(message))
 
@@ -358,5 +355,5 @@ async def show_voted_designers_callback(update: Update, context: ContextTypes.DE
 
 	voted_users_list = await load_voted_users(query.message, context, receiver_id=user_id)
 	if voted_users_list:
-		text = data_list_to_string(voted_users_list, field_names="author_name", prefix="- ")
+		text = data_to_string(voted_users_list, field_names="author_name", prefix="- ")
 		temp_messages["voted_list"] = await query.message.reply_text('*В рейтинге участвовали:*\n\n' + f'_{text}_')

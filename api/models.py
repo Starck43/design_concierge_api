@@ -6,7 +6,6 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q, Avg, F, FloatField, Case, When
-from django.utils import timezone
 from rest_framework.authtoken.models import Token
 
 from api.logic import user_directory_path, MediaFileStorage
@@ -69,6 +68,31 @@ class UserGroup(models.Model):
 		return Group.get_label_by_value(self.code)
 
 
+class Category(models.Model):
+	name = models.CharField('Название категории/вида деятельности', max_length=100)
+	group = models.ForeignKey(
+		UserGroup,
+		verbose_name='Группа',
+		to_field='code',
+		on_delete=models.SET_NULL,
+		related_name='categories',
+		null=True
+	)
+	keywords = models.CharField(
+		'Ключевые слова',
+		max_length=255,
+		help_text='Ключевые поисковые фразы для детального описания категории',
+		blank=True
+	)
+
+	class Meta:
+		verbose_name = 'Вид деятельности'
+		verbose_name_plural = 'Виды деятельности'
+
+	def __str__(self):
+		return f'{self.name}'
+
+
 class Country(models.Model):
 	name = models.CharField('Название страны', max_length=20, unique=True)
 	code = models.CharField('Буквенный код страны', max_length=2, unique=True)
@@ -89,7 +113,13 @@ class Region(models.Model):
 	)
 	osm_id = models.IntegerField('OSM код', unique=True, blank=True)
 	place_id = models.IntegerField('Код местности', unique=True, blank=True)
-	in_top = models.BooleanField('В списке рекомендуемых', null=True, blank=True, default=False)
+	in_top = models.BooleanField(
+		'В списке рекомендуемых',
+		null=True,
+		blank=True,
+		default=False,
+		help_text='Предложение выбрать регион из списка на этапе регистрации'
+	)
 
 	class Meta:
 		verbose_name = 'Регион'
@@ -97,25 +127,6 @@ class Region(models.Model):
 
 	def __str__(self):
 		return self.name
-
-
-class Category(models.Model):
-	name = models.CharField('Название категории/вида деятельности', max_length=100)
-	group = models.ForeignKey(
-		UserGroup,
-		verbose_name='Группа',
-		to_field='code',
-		on_delete=models.SET_NULL,
-		related_name='categories',
-		null=True
-	)
-
-	class Meta:
-		verbose_name = 'Вид деятельности'
-		verbose_name_plural = 'Виды деятельности'
-
-	def __str__(self):
-		return f'{self.name}'
 
 
 class User(models.Model):
@@ -128,13 +139,15 @@ class User(models.Model):
 	access = models.SmallIntegerField('Вид доступа', choices=ACCESS_CHOICES, default=0)
 	description = models.TextField('Описание', blank=True)
 	categories = models.ManyToManyField(Category, verbose_name='Виды деятельности', related_name='users')
-	business_start_year = models.PositiveSmallIntegerField('Опыт работы', null=True, blank=True,
-	                                                       help_text="Год начала деятельности")
-	main_region = models.ForeignKey(
-		Region, verbose_name='Основной регион', on_delete=models.SET_NULL, related_name='user_main_region', null=True
+	business_start_year = models.PositiveSmallIntegerField(
+		'Опыт работы', null=True, blank=True, help_text="Год начала деятельности"
 	)
-	regions = models.ManyToManyField(Region, verbose_name='Дополнительные регионы', related_name='users_add_regions',
-	                                 blank=True)
+	main_region = models.ForeignKey(
+		Region, verbose_name='Основной регион', on_delete=models.SET_NULL, related_name='main_region_users', null=True
+	)
+	regions = models.ManyToManyField(
+		Region, verbose_name='Дополнительные регионы', related_name='regions_users', blank=True
+	)
 	segment = models.SmallIntegerField('Сегмент рынка', choices=SEGMENT_CHOICES, null=True, blank=True)
 	address = models.CharField('Адрес', max_length=150, null=True, blank=True)
 	phone = models.CharField('Телефон', validators=[phone_regex], max_length=20, blank=True)
@@ -142,7 +155,12 @@ class User(models.Model):
 	socials_url = models.URLField('Ссылка на соцсеть', blank=True)
 	site_url = models.URLField('Ссылка на сайт', blank=True)
 	created_date = models.DateField('Дата регистрации', auto_now_add=True)
-
+	keywords = models.CharField(
+		'Ключевые слова',
+		max_length=255,
+		help_text='Ключевые поисковые фразы для детального описания пользователя',
+		blank=True
+	)
 	total_rating = models.FloatField('Общий рейтинг', default=0)
 	token = models.ForeignKey(Token, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_token')
 

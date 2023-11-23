@@ -15,8 +15,7 @@ async def update_geolocation_data_choice(update: Update, context: CallbackContex
 	# Локация получена
 	if location is not None:
 		data: dict = await fetch_location(location.latitude, location.longitude)
-		context.chat_data["geolocation"] = data
-
+		context.user_data["geolocation"] = data
 		if data:
 			log.info(
 				f"User {user.full_name} (ID:{user.id}) shared his geolocation. "

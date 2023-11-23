@@ -34,9 +34,11 @@ class RegionSerializer(serializers.ModelSerializer):
 
 
 class CategorySerializer(serializers.ModelSerializer):
+	user_count = serializers.IntegerField(read_only=True)
+
 	class Meta:
 		model = Category
-		fields = ['id', 'name', 'group']
+		fields = ['id', 'name', 'group', 'user_count']
 
 
 class UserListSerializer(serializers.ModelSerializer):

@@ -91,9 +91,11 @@ async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEF
 
 		elif not match_query(SEND_PATTERN, query_message):
 			message = await edit_or_reply_message(
-				update.message,
-				text=f'❕Сообщение уже создано.\nОсталось только отправить',
-				message_id=chat_data.get("last_message_id"),
+				context,
+				text=f'Сообщение уже создано, осталось только отправить',
+				message=chat_data.get("last_message_id"),
+				message_type="info",
+				return_only_id=False,
 				reply_markup=menu_markup
 			)
 			chat_data["last_message_id"] = message.message_id
@@ -168,13 +170,12 @@ async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEF
 			reply_markup=inline_markup
 		)
 
-		message = await edit_or_reply_message(
-			update.message,
+		context.chat_data["last_message_id"] = await edit_or_reply_message(
+			context,
 			text=f"✅ Ваш вопрос отправлен администратору Консьерж Сервис!\n{text}",
-			message_id=context.chat_data.get("last_message_id"),
+			message=chat_data.get("last_message_id"),
 			reply_markup=section["reply_markup"]
 		)
-		context.chat_data["last_message_id"] = message.message_id
 
 	if message:
 		section["messages"].append(message.message_id)

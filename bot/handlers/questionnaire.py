@@ -10,13 +10,13 @@ from bot.constants.messages import (
 	success_questionnaire_message
 )
 from bot.handlers.common import (
-	load_categories, delete_messages_by_key, edit_or_reply_message, load_cat_users
+	load_categories, delete_messages_by_key, edit_or_reply_message, load_cat_users, regenerate_inline_keyboard
 )
 from bot.handlers.rating import validate_rated_user, update_ratings, show_user_rating_questions
 from bot.logger import log
 from bot.states.questionnaire import QuestState
 from bot.utils import (
-	find_obj_in_list, update_inline_keyboard, generate_inline_markup, remove_duplicates,
+	find_obj_in_list, update_inline_markup, generate_inline_markup, remove_duplicates,
 	format_output_text, extract_fields
 )
 
@@ -32,8 +32,8 @@ async def start_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE
 	log.info(f"User {user.full_name} (ID:{user.id}) started questionnaire.")
 
 	# TODO: переместить логику сохранения categories в саму функцию load_categories
-	chat_data.setdefault("categories", await load_categories(update.message, context, group=[1, 2]))
-	if not chat_data["categories"]:
+	categories = await load_categories(update.message, context, groups=[1, 2])
+	if not categories:
 		return QuestState.DONE
 
 	message = await update.message.reply_text(
@@ -109,14 +109,10 @@ async def show_users_in_category(update: Update, context: ContextTypes.DEFAULT_T
 		# удалим дублирующихся поставщиков в списке отобранных для анкетирования
 		remove_duplicates(chat_data["selected_users"], "id")
 		users = extract_fields(chat_data["selected_users"], field_names="username")
+		text = f'{format_output_text("", users, tag="_")}'
 
-		message = await edit_or_reply_message(
-			update.message,
-			message_id=chat_data.get("last_message_id", None),
-			text=f'{format_output_text("", users, value_tag="_")}',
-			reply_markup=None
-		)
-		temp_messages["selected_users"] = message.message_id
+		message_id = await edit_or_reply_message(context, text=text, message=chat_data.get("last_message_id"))
+		temp_messages["selected_users"] = message_id
 		chat_data["last_message_id"] = None
 
 		chat_data.pop("selected_cat_index", None)
@@ -148,13 +144,12 @@ async def show_users_in_category(update: Update, context: ContextTypes.DEFAULT_T
 		item_key="username"
 	)
 
-	message = await edit_or_reply_message(
-		update.message,
-		message_id=chat_data.get("last_message_id", None),
+	chat_data["last_message_id"] = await edit_or_reply_message(
+		context,
 		text=title,
+		message=chat_data.get("last_message_id"),
 		reply_markup=inline_markup
 	)
-	chat_data["last_message_id"] = message.message_id
 
 	return chat_data["current_state"]
 
@@ -164,13 +159,12 @@ async def select_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	query = update.callback_query
 
 	await query.answer()
-	button_data = query.data
 	chat_data = context.chat_data
 
 	chat_data.setdefault("selected_users", [])
 	cat_index = chat_data["selected_cat_index"]
 	selected_cat = chat_data["categories"][cat_index]
-	params = {"id": int(button_data), "category": selected_cat["id"]}
+	params = {"id": int(query.data), "category": selected_cat["id"]}
 	selected_user, _ = find_obj_in_list(chat_data["questionnaire_cat_users"], params)
 
 	if selected_user in chat_data["selected_users"]:
@@ -178,13 +172,7 @@ async def select_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	else:
 		chat_data["selected_users"].append(selected_user)
 
-	updated_keyboard = update_inline_keyboard(
-		query.message.reply_markup.inline_keyboard,
-		active_value=button_data,
-		button_type='checkbox'
-	)
-	await query.message.edit_reply_markup(reply_markup=updated_keyboard)
-
+	await regenerate_inline_keyboard(query.message, active_value=query.data, button_type="checkbox")
 	return chat_data["current_state"]
 
 

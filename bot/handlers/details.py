@@ -43,17 +43,17 @@ async def show_user_card_message(
 	# TODO: сделать экранирование спецсимволов для ссылок в detect_social
 	# отобразим сообщение карточки с полными данными
 	inline_message = await message.reply_text(
-		f'{format_output_text("", user["name"] + rating_string, value_tag="*")}\n'
-		f'{format_output_text("", user["description"], value_tag="_")}'
+		f'{format_output_text("", user["name"] + rating_string, tag="*")}\n'
+		f'{format_output_text("", user["description"], tag="_")}'
 		f'{format_output_link("📍", address_caption, geo_link)}'
 		f'{format_output_link("📞️", phone_caption, user["phone"], link_type="tel")}'
 		f'{format_output_link("🌐", user["site_url"], user["site_url"])}'
 		f'{format_output_link(*detect_social(user["socials_url"]))}'
-		f'{format_output_text("Сфера деятельности", categories, default_value="не выбрана", value_tag="`")}'
-		f'{format_output_text("Основной регион", main_region, default_value="не установлен", value_tag="`")}'
-		f'{format_output_text("Другие регионы", regions, value_tag="`")}'
-		f'{format_output_text("Опыт работы", work_experience, value_tag="`")}'
-		f'{format_output_text("Сегмент", segment, value_tag="`")}',
+		f'{format_output_text("Сфера деятельности", categories, default_value="не выбрана", tag="`")}'
+		f'{format_output_text("Основной регион", main_region, default_value="не установлен", tag="`")}'
+		f'{format_output_text("Другие регионы", regions, tag="`")}'
+		f'{format_output_text("Опыт работы", work_experience, tag="`")}'
+		f'{format_output_text("Сегмент", segment, tag="`")}',
 		reply_markup=reply_markup
 	)
 	
