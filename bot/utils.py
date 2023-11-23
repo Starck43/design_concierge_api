@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timedelta
 from enum import Enum
 from functools import wraps
-from typing import Optional, Dict, Union, List, Any, Tuple, Pattern, Literal
+from typing import Optional, Dict, Union, List, Any, Tuple, Literal
 from urllib.parse import urlencode
 
 import aiohttp
@@ -253,9 +253,9 @@ def generate_inline_markup(
 	return InlineKeyboardMarkup(buttons)
 
 
-def update_inline_keyboard(
+def update_inline_markup(
 		inline_keyboard: Union[List[List[InlineKeyboardButton]], Tuple[Tuple[InlineKeyboardButton]]],
-		active_value: str,
+		active_value: Union[str, list] = None,
 		button_type: Literal["checkbox", "radiobutton", "rate"] = "radiobutton",
 ) -> InlineKeyboardMarkup:
 	"""
@@ -264,13 +264,17 @@ def update_inline_keyboard(
 	"""
 
 	new_inline_keyboard = []
+	if isinstance(active_value, int):
+		active_value = [active_value]
+	elif active_value is None:
+		active_value = []
 
 	for row in inline_keyboard:
 		new_row = []
 		rate_value = len(row)
 		for button in row:
 			if button_type == 'rate':
-				rate = int(active_value)
+				rate = int(active_value[0] if active_value else "0")
 				level = rate / rate_value
 				try:
 					symbol = RATE_BUTTONS[3]
@@ -287,14 +291,14 @@ def update_inline_keyboard(
 
 				new_button = InlineKeyboardButton(symbol, callback_data=button.callback_data)
 
-			elif button.callback_data == active_value:
+			elif button.callback_data in active_value:
 				if button_type == 'checkbox':
-					new_symbol = "✓ "
-					old_symbol = "▢ "
+					new_symbol = "✓  "
+					old_symbol = "▢  "
 					if button.text.startswith(new_symbol):
-						text = old_symbol + button.text[2:]
+						text = old_symbol + button.text[3:]
 					elif button.text.startswith(old_symbol):
-						text = new_symbol + button.text[2:]
+						text = new_symbol + button.text[3:]
 					else:
 						text = f'{new_symbol}{button.text}'
 					new_button = InlineKeyboardButton(text, callback_data=button.callback_data)
@@ -306,8 +310,8 @@ def update_inline_keyboard(
 
 			else:
 				if button_type == 'checkbox':
-					selected_symbol = "✓ "
-					symbol = "▢ "
+					selected_symbol = "✓  "
+					symbol = "▢  "
 					text = button.text
 					if not button.text.startswith(symbol) and not button.text.startswith(selected_symbol):
 						text = f'{symbol}{button.text}'
@@ -348,11 +352,10 @@ def calculate_years_of_work(start_year: int, absolute_value: bool = False) -> Op
 	if not start_year:
 		return None
 
-	if absolute_value:
-		years_of_work = start_year
-	else:
+	years_of_work = int(start_year)
+	if not absolute_value:
 		current_year = datetime.now().year
-		years_of_work = current_year - start_year
+		years_of_work = current_year - years_of_work
 
 	if years_of_work == 0:
 		return "меньше года"
@@ -366,6 +369,44 @@ def calculate_years_of_work(start_year: int, absolute_value: bool = False) -> Op
 
 def replace_double_slashes(url: str):
 	return re.sub(r'(?<!:)//+', '/', url)
+
+
+def clean_string(text: str, delimiter: str = " ") -> str:
+	"""
+	Cleans a string by replacing spaces, underscores, hyphens, and special characters with a given delimiter.
+	:param text: The input string to be cleaned.
+	:param delimiter: The delimiter to be used for replacing special characters and spaces. Default is a space.
+	:return: The cleaned string with the specified delimiter.
+	"""
+	pattern = r"[\s\W_-]+"
+	return re.sub(pattern, delimiter, text)
+
+
+def filter_strings(strings: Union[list, str], length: int) -> Tuple[list, list]:
+	"""
+	Filters a list of strings based on a given length and returns a tuple containing the new list and
+	the list of removed elements.
+	If a string is passed instead of a list, it is first converted to a list of strings using the regex pattern.
+	Args:
+		strings (List[str]): The list of strings to be filtered.
+		length (int): The length to filter the strings by.
+	Returns:
+		Tuple[list, list]: A tuple containing the new list of filtered strings and the list of removed elements.
+	"""
+	removed_elements = []
+	filtered_elements = []
+
+	if strings:
+		if isinstance(strings, str):
+			strings = re.split(r'[\s\W_-]+', strings)
+
+		for s in strings:
+			if len(s) < length:
+				removed_elements.append(s)
+			else:
+				filtered_elements.append(s)
+
+	return filtered_elements, removed_elements
 
 
 def get_formatted_date(date: str, format_pattern: str = "%d.%m.%Y") -> tuple:
@@ -462,19 +503,24 @@ def extract_fields(data: List[dict], field_names: Union[str, List[str]]) -> List
 	return result
 
 
-def data_list_to_string(
-		data: List[dict],
+def data_to_string(
+		data: Union[List[dict], Dict[str, dict]],
 		field_names: Union[str, List[str]],
 		separator: str = "\n",
-		prefix: str = ""
+		prefix: str = "",
+		tag: str = ""
 ) -> str:
 	"""
-		Converts a list of dictionaries into a string with specific fields formatted as desired.
-		:param data: A list of dictionaries to extract values from.
-		:param field_names: A string or list of strings representing the field names to extract values for.
-		:param separator: A string used to separate the values in the resulting string. Default is a newline character.
-		:return: A string representing the values extracted from the dictionaries.
+	Converts a list or dictionary of dictionaries into a string with specific fields formatted as desired.
+	:param prefix: any symbols before every string: 
+	:param data: A list or dictionary of dictionaries to extract values from.
+	:param field_names: A string or list of strings representing the field names to extract values for.
+	:param separator: A string used to separate the values in the resulting string. Default is a newline character.
+	:return: A string representing the values extracted from the dictionaries.
 	"""
+	if isinstance(data, dict):
+		data = list(data.values())
+
 	if not data:
 		return ""
 
@@ -484,34 +530,38 @@ def data_list_to_string(
 		return ""
 
 	if isinstance(result_list[0], str):
-		return prefix + f'{separator}{prefix}'.join(result_list)
+		return prefix + tag + f'{separator}{prefix}'.join(result_list) + tag
 
 	result = ""
 	for fields in result_list:
-		line = prefix + str(fields.pop(0))
-		print(line)
+		line = prefix + tag + str(fields.pop(0))
 		if len(fields) > 0:
 			line += f": {' '.join(map(str, fields))}"
-		result += line + separator
+		result += line + tag + separator
 
 	return result.rstrip(separator)
 
 
 def format_output_text(
 		caption: str = "",
-		value: Union[str, list] = None,
+		data: Union[str, dict, list] = None,
 		default_value: str = "",
 		default_sep: str = ":",
-		value_tag: str = ""
+		tag: str = ""
 ) -> str:
-	if (not value or isinstance(value, str) and str(value).strip('\n') == "") and not default_value:
+	if (not data or isinstance(data, str) and str(data).strip('\n') == "") and not default_value:
 		return ""
+
+	if isinstance(data, dict):
+		value = list(data.values())
+	else:
+		value = data
 
 	if isinstance(value, list):
 		value = value[0] if len(value) == 1 else "\n- " + "\n- ".join(value)
 
 	result = f'{caption}{default_sep} ' if caption else ""
-	result += f'{value_tag}{value or default_value}{value_tag}'
+	result += f'{tag}{value or default_value}{tag}'
 	return "\n" + result.lstrip()
 
 
@@ -568,8 +618,8 @@ def find_obj_in_list(list_dict: List[dict], search_params: Dict[str, Any]) -> Tu
 	return {}, -1
 
 
-def remove_item_from_list(src: List[Dict[str, Any]], key: str, value: Any) -> bool:
-	obj, i = find_obj_in_list(src, {key: value})
+def remove_item_from_list(src: List[Dict[str, Any]], params: Dict[str, Any]) -> bool:
+	obj, i = find_obj_in_list(src, params)
 	if obj:
 		src.pop(i)
 		return True
@@ -602,6 +652,29 @@ def remove_duplicates(data: List[dict], field: str) -> None:
 
 def get_key_values(arr: list, key: str) -> List[str]:
 	return [obj.get(str(key)) for obj in arr]
+
+
+def list_to_dict(objects: list, key_name: str, *fields) -> dict:
+	"""
+	This function takes a list of objects and a key name as input, and returns a dictionary
+	where the keys are the values of the key name property of the objects,
+	and the values are the objects themselves.
+
+	Args:
+		objects (list): A list of objects.
+		key_name (str): The name of the key property to use as the dictionary keys.
+		*fields (str): The names of the properties to include in the dictionary values.
+
+	Returns:
+		dict: A dictionary where the keys are the values of the key name property of the objects,
+		and the values are dictionaries containing the specified properties of the objects.
+	"""
+	result = {}
+	for obj in objects:
+		if obj[key_name]:
+			item = {field: obj[field] for field in fields}
+			result[obj[key_name]] = item
+	return result
 
 
 def update_text_by_keyword(text: str, keyword: str, replacement: str) -> str:
@@ -691,6 +764,23 @@ def remove_special_chars(s: str, code_alias: str = "866") -> str:
 		return ""
 
 	return str(s).encode(code_alias, 'ignore').decode(code_alias).strip()
+
+
+def get_plural_word(number: int, nominative_singular: str, genetive_singular: str, nominative_plural: str) -> str:
+	"""
+	Returns the plural form of a word for a given number.
+	:param number: The number for which to determine the plural form of the word.
+	:param nominative_singular: The nominative singular form of the word.
+	:param genetive_singular: The genetive singular form of the word.
+	:param nominative_plural: The nominative plural form of the word.
+	:return: The plural form of the word for the given number.
+	"""
+	last_digit = 0
+	word = ((number in range(5, 20)) and nominative_plural or
+	        (1 in (number, (last_digit := number % 10))) and nominative_singular or
+	        ({number, last_digit} & {2, 3, 4}) and genetive_singular or nominative_plural
+	        )
+	return word
 
 
 def match_query(substring: any, text: str) -> bool:
@@ -844,20 +934,19 @@ def fuzzy_compare(
 					if src.lower() in s.lower():
 						return s, 0, i
 
-		elif isinstance(data[0], dict) and item_key in data[0]:
-			lower_data = [d[item_key].lower() for d in data]
-			matches = difflib.get_close_matches(src.lower(), lower_data, cutoff=cutoff)
-			if matches:
-				match = matches[0]
-				match_ratio = difflib.SequenceMatcher(None, src, match).ratio()
-				match_index = next((i for i, d in enumerate(data) if d[item_key].lower() == match), None)
-				return data[match_index], match_ratio, match_index
-
-			else:
-				# If no close match was found, do a case-insensitive substring search
-				for i, s in enumerate(data):
-					if src.lower() in s[item_key].lower():
-						return s, 0, i
+		elif isinstance(data[0], dict) and data[0].get(item_key):
+			result = {}, 0, None
+			matcher = difflib.SequenceMatcher(None)
+			matcher.set_seq2(src.lower())
+			for i, obj in enumerate(data):
+				string = obj[item_key].lower()
+				matcher.set_seq1(string)
+				ratio = matcher.ratio()
+				if result[1] < ratio > cutoff:
+					result = data[i].copy(), ratio, i
+					if ratio == 1:
+						break
+			return result
 
 	return "", 0, None
 
