@@ -134,8 +134,9 @@ class User(models.Model):
 	SEGMENT_CHOICES = ((0, 'Премиум, Средний+'), (1, 'Средний'), (2, 'Средний-, Эконом'),)
 
 	user_id = models.CharField('ID пользователя', max_length=10, blank=True)
-	username = models.CharField('Имя пользователя', max_length=50)
-	name = models.CharField('Полное название', max_length=150, blank=True)
+	name = models.CharField('Название', max_length=150)
+	contact_name = models.CharField('Контактное лицо', max_length=50, blank=True)
+	username = models.CharField('Имя пользователя Телеграм', max_length=30, blank=True)
 	access = models.SmallIntegerField('Вид доступа', choices=ACCESS_CHOICES, default=0)
 	description = models.TextField('Описание', blank=True)
 	categories = models.ManyToManyField(Category, verbose_name='Виды деятельности', related_name='users')
@@ -162,7 +163,7 @@ class User(models.Model):
 		blank=True
 	)
 	total_rating = models.FloatField('Общий рейтинг', default=0)
-	token = models.ForeignKey(Token, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_token')
+	token = models.ForeignKey(Token, verbose_name='Токен', on_delete=models.SET_NULL, null=True, blank=True, related_name='user_token')
 
 	class Meta:
 		verbose_name = 'Пользователь'
@@ -170,7 +171,7 @@ class User(models.Model):
 		ordering = ('-created_date',)
 
 	def __str__(self):
-		return f'{self.name or self.username}'
+		return self.name
 
 	def save(self, *args, **kwargs):
 		is_new = self.pk is None
@@ -271,6 +272,18 @@ class User(models.Model):
 	def voted_users_count(self):
 		return self.voted_users.count()
 
+	@property
+	def placed_orders_count(self):
+		return self.owner_orders.exclude(status=0).count()
+
+	@property
+	def done_orders_count(self):
+		return self.owner_orders.filter(status__in=[3, 4]).count()
+
+	@property
+	def executor_done_orders_count(self):
+		return self.executor_orders.filter(status=3).count()
+
 	def get_token(self):
 		if self.access > 0:
 			return self.generate_token()
@@ -366,7 +379,7 @@ class Rating(models.Model):
 
 	@property
 	def avg_rating(self):
-		if self.receiver.categories.filter(group=1).exists(): # required fields
+		if self.receiver.categories.filter(group=1).exists():  # required fields
 			fields = [
 				field.name for field in self._meta.fields
 				if isinstance(field, models.PositiveSmallIntegerField) and not field.null
@@ -429,7 +442,7 @@ class Order(models.Model):
 		User,
 		verbose_name='Автор заказа',
 		on_delete=models.CASCADE,
-		related_name='orders',
+		related_name='owner_orders',
 		limit_choices_to=Q(categories__group=Group.DESIGNER.value),
 	)
 	title = models.CharField('Название заказа', max_length=100)
@@ -443,7 +456,7 @@ class Order(models.Model):
 	responded_users = models.ManyToManyField(
 		User,
 		verbose_name='Откликнувшиеся на заказ',
-		related_name='user_order',
+		related_name='responded_users_orders',
 		limit_choices_to=Q(categories__group=Group.OUTSOURCER.value),
 		blank=True,
 	)
@@ -451,7 +464,7 @@ class Order(models.Model):
 		User,
 		verbose_name='Выбран в качестве исполнителя',
 		on_delete=models.SET_NULL,
-		related_name='executor_order',
+		related_name='executor_orders',
 		limit_choices_to=Q(categories__group=Group.OUTSOURCER.value),
 		null=True,
 		blank=True
@@ -496,7 +509,15 @@ class Support(models.Model):
 		verbose_name_plural = 'Вопросы в техподдержку'
 
 	def __str__(self):
-		return self.user.username
+		return self.user.name
+
+
+class Message(models.Model):
+	sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_messages')
+	receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='received_messages')
+	order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='messages', null=True, blank=True)
+	text = models.TextField('Текст сообщения')
+	created_at = models.DateTimeField('Дата создания', auto_now_add=True)
 
 
 class File(models.Model):

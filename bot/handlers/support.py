@@ -14,6 +14,7 @@ from bot.utils import generate_inline_markup, generate_reply_markup, match_query
 
 
 async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+	user_details = context.user_data["details"]
 	chat_data = context.chat_data
 	local_data = chat_data.setdefault("local_data", {})
 	upload_files = chat_data.get("upload_files", {})
@@ -32,7 +33,7 @@ async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEF
 
 	# если это ответ на сообщение пользователя через колбэк
 	elif local_data.get("reply_to_message"):
-		username = local_data["reply_to_message"].get("username")
+		name = local_data["reply_to_message"].get("name")
 		chat_id = local_data["reply_to_message"].get("chat_id")
 		reply_to_message_id = local_data["reply_to_message"].get("reply_to_message_id")
 		answer_text = f'*🔔 Ответ от техподдержки:*\nНомер обращения: *#{reply_to_message_id}*\n'
@@ -62,7 +63,7 @@ async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEF
 			text = "❗️Сообщение не обновилось на сервере!"
 
 		message = await update.message.reply_text(
-			f'✅ Ответ отправлен пользователю:\n@{username}\n_{text}_\nНомер обращения: *#{reply_to_message_id}*',
+			f'✅ Ответ отправлен пользователю:\n*{name}*\n_{text}_\nНомер обращения: *#{reply_to_message_id}*',
 			reply_markup=section["reply_markup"]
 		)
 		section["messages"].append(message.message_id)
@@ -70,7 +71,7 @@ async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEF
 
 	# обращение через подраздел Профиль -> Техподдержка
 	elif local_data.get("message_for_admin"):
-		menu_markup = generate_reply_markup(SEND_CONFIRMATION_KEYBOARD)
+		menu_markup = generate_reply_markup([SEND_CONFIRMATION_KEYBOARD])
 		section["reply_markup"] = menu_markup
 		message_for_admin = local_data["message_for_admin"]
 		no_attached_files = not (upload_files.get("photo") or upload_files.get("document"))
@@ -95,27 +96,26 @@ async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEF
 				text=f'Сообщение уже создано, осталось только отправить',
 				message=chat_data.get("last_message_id"),
 				message_type="info",
-				return_only_id=False,
+				return_message_id=False,
 				reply_markup=menu_markup
 			)
 			chat_data["last_message_id"] = message.message_id
 			return state
 
 		# далее начинается подготовка к отправке уведомления и регистрация обращения на сервере
-		user = update.effective_chat
 		message_id = message_for_admin["message_id"]
-		message_text = f'🔔 Вопрос в техподдержку от *@{user.username}* (ID:{user.id})\n'
+		message_text = f'🔔 Вопрос в техподдержку от *@{user_details["name"]}* (ID:{user_details["user_id"]})\n'
 		message_text += f'*#{message_id}*: {message_for_admin["question"]}'
 
 		inline_markup = generate_inline_markup(
 			REPLY_KEYBOARD,
-			callback_data=f'reply_to_{user.id}__message_id_{message_id}'
+			callback_data=f'reply_to_{user_details["user_id"]}__message_id_{message_id}'
 		)
 		# сохраним обращение пользователя с вопросом в БД
 		user_message = await update_support_data(
 			update.message,
 			context,
-			user_id=user.id,
+			user_id=user_details["user_id"],
 			message_id=message_id,
 			data={"question": message_for_admin["question"]}
 		)
@@ -144,14 +144,14 @@ async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEF
 
 	# отправим введенный текст сразу администратору бота, если пользователь не находится в секции Техподдержка
 	elif not section["state"] == MenuState.SUPPORT:
-		user = update.effective_chat
 		message_id = update.message.message_id
-		message_text = f'🔔 Сообщение администратору от *@{user.username}* (ID:{user.id})\n\n`{query_message}`'
+		message_text = f'🔔 Сообщение администратору от *{user_details["name"]}* (ID:{user_details["user_id"]})\n\n' \
+		               f'`{query_message}`'
 		# обновим сообщение на сервере
 		user_message = await update_support_data(
 			update.message,
 			context,
-			user_id=user.id,
+			user_id=user_details["user_id"],
 			message_id=message_id,
 			data={"question": query_message}
 		)
@@ -162,7 +162,7 @@ async def ask_question_to_admin_choice(update: Update, context: ContextTypes.DEF
 
 		inline_markup = generate_inline_markup(
 			REPLY_KEYBOARD,
-			callback_data=f'reply_to_{user.id}__message_id_{message_id}'
+			callback_data=f'reply_to_{user_details["user_id"]}__message_id_{message_id}'
 		)
 		await context.bot.send_message(
 			chat_id=ADMIN_CHAT_ID,
@@ -195,7 +195,7 @@ async def reply_to_user_message_callback(update: Update, context: ContextTypes.D
 
 	section = get_section(context)
 	local_data = context.chat_data.setdefault("local_data", {})
-	user_message = await load_support_data(update.message, context, message_id=message_id, user_id=user_id)
+	user_message = await load_support_data(query.message, context, message_id=message_id, user_id=user_id)
 	if user_message and user_message["is_replied"]:
 		message = await query.message.reply_text(
 			f'Вопрос был ранее закрыт!\nОбращение: *#{user_message.get("message_id")}*',

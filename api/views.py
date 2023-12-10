@@ -1,3 +1,5 @@
+import itertools
+from collections import OrderedDict
 from datetime import date
 from functools import cached_property
 
@@ -5,7 +7,7 @@ import requests
 from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F, Count
+from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F, Count, Field
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
@@ -15,10 +17,10 @@ from rest_framework.generics import (
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rating, Region, File, Order, Favourite, Group, Support
+from api.models import Category, User, Rating, Region, File, Order, Favourite, Group, Support, Message
 from .serializers import (
 	CategorySerializer, UserListSerializer, RatingSerializer, RegionSerializer, UserDetailSerializer,
-	FileUploadSerializer, OrderSerializer, FavouriteSerializer, SupportSerializer
+	FileUploadSerializer, OrderSerializer, FavouriteSerializer, SupportSerializer, MessageSerializer
 )
 
 
@@ -65,7 +67,7 @@ class CategoryDetail(RetrieveAPIView):
 
 
 class UserList(ListAPIView):
-	queryset = User.objects.all()
+	queryset = User.objects.filter(access__gt=-1)
 	serializer_class = UserListSerializer
 
 	def get_queryset(self):
@@ -80,7 +82,7 @@ class UserList(ListAPIView):
 			groups = list(map(int, groups))
 			queryset = queryset.filter(categories__group__in=groups)
 
-		return queryset.order_by('-total_rating', 'username')
+		return queryset.order_by('-total_rating', 'name')
 
 	def get(self, request, *args, **kwargs):
 		id = request.query_params.get('id')
@@ -149,8 +151,9 @@ class UserDetail(APIView):
 			data = {
 				"id": user.id,
 				"user_id": user.user_id,
-				"name": user.__str__(),
-				"username": user.username,
+				"name": user.name,
+				"contact_name": user.contact_name,
+				"username": user.username or "",
 				"categories": user.categories.values_list("id", flat=True),
 				"groups": user.categories.values_list('group', flat=True).distinct(),
 				"total_rating": user.total_rating
@@ -178,15 +181,25 @@ class UserDetail(APIView):
 		serializer = UserDetailSerializer(user, context=context)
 		return Response(serializer.data, status=status.HTTP_200_OK, headers=headers)
 
-	def post(self, request):
-		if not request.path.endswith('/create/'):
-			return Response(status=status.HTTP_400_BAD_REQUEST)
+	def post(self, request, pk=None):
+		if pk is None:
+			if not request.path.endswith('/create/'):
+				return Response(status=status.HTTP_400_BAD_REQUEST)
 
-		serializer = UserDetailSerializer(data=request.data)
+			serializer = UserDetailSerializer(data=request.data)
+			if serializer.is_valid():
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-		if serializer.is_valid():
-			serializer.save()
-			return Response(serializer.data, status=status.HTTP_201_CREATED)
+		else:
+			user = self.get_user(pk)
+			if not isinstance(user, User):
+				return user
+
+			serializer = UserDetailSerializer(user, data=request.data)
+			if serializer.is_valid():
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_200_OK)
 
 		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -194,6 +207,7 @@ class UserDetail(APIView):
 		user = self.get_user(pk)
 		if not isinstance(user, User):
 			return user
+
 		serializer = UserDetailSerializer(user, data=request.data, partial=True)
 		if serializer.is_valid():
 			serializer.save()
@@ -331,7 +345,7 @@ class OrderListView(ListAPIView):
 		if exclude_owner_id:
 			q &= ~Q(owner=exclude_owner_id)
 
-		return queryset.filter(q).order_by('-status', 'executor', 'expire_date')
+		return queryset.filter(q).order_by('-status', '-executor', 'expire_date')
 
 	def get_queryset(self):
 		return self.filtered_queryset.distinct()
@@ -344,10 +358,6 @@ class OrderDetail(RetrieveUpdateDestroyAPIView):
 
 	def post(self, request, *args, **kwargs):
 		if request.path.endswith('/create/'):
-			# owner_id = request.data.get('owner')
-			# if owner_id:
-			# 	owner = User.objects.get(id=owner_id)
-			# 	request.data['owner'] = owner
 			serializer = self.get_serializer(data=request.data, partial=True)
 			if serializer.is_valid():
 				serializer.save()
@@ -417,11 +427,24 @@ class RatingQuestionsView(APIView):
 class UserFieldNamesView(APIView):
 	""" Чтение названий полей модели User"""
 
+	@classmethod
+	def get_fields(cls):
+		sortable_private_fields = [f for f in User._meta.private_fields if isinstance(f, Field)]
+		return sorted(itertools.chain(User._meta.concrete_fields, sortable_private_fields, User._meta.many_to_many),
+		              key=lambda f: f.creation_counter)
+
 	def get(self, request, *args, **kwargs):
-		excludes = ["id", "user_id", "total_rating", "created_date", "token"]
+		fields = [
+			'name', 'contact_name', 'username', 'description', 'categories', 'main_region', 'regions',
+			'business_start_year', 'segment', 'address', 'phone', 'email', 'socials_url', 'site_url'
+		]
+		excludes = [
+			"id", "access", "user_id", "total_rating", "business_start_year", "created_date", "keywords", "token"
+		]
+
 		field_names = {
-			f.name: f.verbose_name or f.name for f in User._meta.get_fields()
-			if f.name not in excludes and not isinstance(f, (ManyToOneRel, ManyToManyRel, OneToOneRel))
+			field.name: field.verbose_name or field.name for field in self.get_fields()
+			if field.name not in excludes
 		}
 		return Response(field_names)
 
@@ -491,6 +514,20 @@ class FileUploadView(APIView):
 
 		else:
 			return Response(serializer.errors, status=400)
+
+
+class MessageListCreateView(APIView):
+	lookup_field = 'order_id'
+
+	def get(self, request, order_id):
+		return Message.objects.filter(order=order_id)
+
+	def post(self, request, *args, **kwargs):
+		if request.path.endswith('/create/'):
+			serializer = MessageSerializer(data=request.data, partial=True)
+			if serializer.is_valid():
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class UserSearchView(APIView):

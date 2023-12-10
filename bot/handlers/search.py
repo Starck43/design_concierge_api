@@ -1,4 +1,3 @@
-import re
 from typing import Optional, List
 
 from telegram import Update, Message
@@ -6,7 +5,7 @@ from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import SEARCH_OPTIONS_KEYBOARD, SEGMENT_KEYBOARD
 from bot.constants.messages import (
-	offer_to_select_segment_message, offer_to_select_rating_message
+	offer_to_select_segment_message, offer_to_select_rating_message, recommend_new_user_message
 )
 from bot.constants.patterns import FILTER_PATTERN, CLEAR_FILTER_PATTERN
 from bot.constants.static import SEARCH_FIELD_LIST, MAX_RATE
@@ -126,6 +125,9 @@ async def input_search_data_choice(update: Update, context: ContextTypes.DEFAULT
 				message=chat_data.get("last_message_id", None),
 				reply_markup=section["reply_markup"]
 			)
+		# предложение добавить нового пользователя
+		message = await recommend_new_user_message(update.message)
+		last_message_ids["new_users"] = message.message_id
 
 	return state
 
@@ -144,8 +146,8 @@ async def select_search_option_callback(update: Update, context: ContextTypes.DE
 	last_message_ids = chat_data.setdefault("last_message_ids", {})
 
 	local_data = chat_data.setdefault("local_data", {})
-	selected_callback_data = local_data.setdefault("selected_callback_data", {})  # выбранные колбэки списка кнопок
 	search_data = local_data.setdefault("search_data", {"fields": {}})
+	selected_categories = search_data.setdefault("selected_categories", {})
 	search_option_message = last_message_ids.get(f"search_option_{selected_option}")
 	section = get_section(context)
 
@@ -155,11 +157,12 @@ async def select_search_option_callback(update: Update, context: ContextTypes.DE
 	caption = SEARCH_OPTIONS_KEYBOARD[selected_option]
 	title = f'*Выберите {caption[2:].lower()}*'
 	if selected_option == 0:  # категории
+		cat_ids = list(selected_categories.keys())
 		inline_markup = await generate_categories_list(
 			query.message,
 			context,
 			groups=section["cat_group"],
-			checked_callback_data=list(selected_callback_data.values()),
+			checked_ids=cat_ids,
 			button_type="checkbox"
 		)
 		message = await query.message.reply_text(text=f'{caption[0]} {title}:', reply_markup=inline_markup)
@@ -187,11 +190,10 @@ async def select_search_categories_callback(update: Update, context: ContextType
 
 	query_data = query.data.split("__")
 	cat_id = int(query_data[-1].lstrip("category_"))
-	group = int(query_data[0].lstrip("group_")) if len(query_data) > 1 else None
+	# group = int(query_data[0].lstrip("group_")) if len(query_data) > 1 else None
 
 	last_message_ids = context.chat_data.setdefault("last_message_ids", {})
 	local_data = context.chat_data.setdefault("local_data", {})
-	selected_callback_data = local_data.setdefault("selected_callback_data", {})  # выбранные колбэки списка кнопок
 	search_data = local_data.setdefault("search_data", {})
 	selected_option = 0
 	search_data.setdefault("last_option", selected_option)
@@ -204,13 +206,11 @@ async def select_search_categories_callback(update: Update, context: ContextType
 		return
 
 	# await regenerate_inline_keyboard(query.message, active_value=query.data, button_type="checkbox")
-	if selected_callback_data.get(cat_id):
+	if selected_categories.get(cat_id):
 		# удалим отмеченную категорию
-		del selected_callback_data[cat_id]
 		del selected_categories[cat_id]
 	else:
 		# Добавим отмеченную категорию
-		selected_callback_data[cat_id] = query.data
 		selected_categories[cat_id] = current_cat
 
 	cat_ids = list(selected_categories.keys())

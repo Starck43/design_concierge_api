@@ -1,6 +1,7 @@
 from typing import Union, List
 
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, ReplyKeyboardRemove, Message
+from telegram.ext import ContextTypes
 
 
 class TGMessage:
@@ -15,6 +16,25 @@ class TGMessage:
 		self.message_id = message_id
 		self.text = text
 		self.reply_markup = reply_markup
+
+	@classmethod
+	async def display_section_messages(cls, context: ContextTypes.DEFAULT_TYPE, section: dict):
+		tg_messages = []
+		reply_markup = section.get("reply_markup")
+		for message in section.get("messages", []):
+			if isinstance(message, cls) and message.text:
+				_message = await context.bot.send_message(
+					chat_id=context.chat_data.get("chat_id"),
+					text=f'*{message.text.upper()}*' if not message.reply_markup and reply_markup else message.text,
+					reply_markup=message.reply_markup or reply_markup
+				)
+				# единожды добавим к сообщению без reply_markup нижнюю клавиатуру
+				if not message.reply_markup and reply_markup:
+					reply_markup = None
+				tg_messages.append(cls.create_message(_message))
+
+		# сохраним новые сообщения, которые отобразили в текущем разделе в messages
+		section["messages"] = tg_messages
 
 	@classmethod
 	def create_message(cls, message: Message):

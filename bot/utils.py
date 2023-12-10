@@ -80,27 +80,45 @@ def allowed_roles(roles: Union[ChatMember, List[str]] = None, channel_id=None):
 # 	return None
 
 
-def build_menu(
+def build_keyboard(
 		buttons: list,
 		cols: int,
-		header_buttons: Optional[list] = None,
-		footer_buttons: Optional[list] = None
-):
-	menu = [buttons[i:i + cols] for i in range(0, len(buttons), cols)]
-	if header_buttons:
-		menu.insert(0, [header_buttons])
-	if footer_buttons:
-		menu.append([footer_buttons])
-	return menu
+		header: Optional[List[KeyboardButton]] = None,
+		footer: Optional[List[KeyboardButton]] = None,
+		as_markup: bool = False,
+		**kwargs
+) -> Union[ReplyKeyboardMarkup, List[List[KeyboardButton]]]:
+	"""
+	Creates a keyboard with buttons for Telegram.
+
+	:param buttons: a list of text buttons
+	:param cols: the number of columns in the keyboard
+	:param header: a list of Keyboard buttons for the header
+	:param footer: a list of Keyboard buttons for the footer
+	:param as_markup: if keyboard need to be returned as ReplyKeyboardMarkup
+	:param kwargs: additional parameters for the buttons
+	:return: a list of lists of KeyboardButton
+	"""
+
+	buttons = [
+		[KeyboardButton(text=btn, **kwargs) for btn in buttons[i:i + cols]] for i in range(0, len(buttons), cols)
+	] if buttons else []
+
+	if header:
+		buttons.insert(0, [btn for btn in header])
+
+	if footer:
+		buttons.append([btn for btn in footer])
+
+	return ReplyKeyboardMarkup(buttons, resize_keyboard=True) if as_markup else buttons
 
 
 def generate_reply_markup(
 		data: Union[List[str], List[List[str]], List[Dict[str, Any]], None],
+		columns: int = 2,
 		resize_keyboard: bool = True,
 		one_time_keyboard: bool = True,
 		is_persistent: bool = True,
-		share_location: bool = False,
-		share_contact: bool = False,
 		**kwargs
 ) -> Optional[ReplyKeyboardMarkup]:
 	"""
@@ -109,11 +127,10 @@ def generate_reply_markup(
 	Args:
 		data: The data to be displayed on the keyboard. Can be a list of strings,
 		a list of lists of strings, or a list of dictionaries.
+		columns: the number of columns in the keyboard
 		resize_keyboard: Whether the keyboard should be resized to fit the number of buttons.
 		one_time_keyboard: Whether the keyboard should be hidden after use.
 		is_persistent: Whether the keyboard should be always shown when the regular keyboard is hidden.
-		share_location: Share current location
-		share_contact: Share user contact information
 		**kwargs: Additional keyword arguments to be passed to the KeyboardButton constructor.
 
 	Returns:
@@ -124,18 +141,26 @@ def generate_reply_markup(
 	if not data:
 		return None
 	buttons = []
-	for row in data:
-		if isinstance(row, str):
-			row = [row]
-		elif isinstance(row, dict):
-			key = row.get("text", "button")
-			row = [KeyboardButton(key, **kwargs)]
-		buttons.append(row)
+	request_location = kwargs.pop("request_location", None)
+	if request_location:
+		buttons.append([KeyboardButton("📍 Определить регион", request_location=True, **kwargs)])
 
-	if share_location:
-		buttons.insert(0, [KeyboardButton("📍 Определить регион", request_location=True, **kwargs)])
-	if share_contact:
-		buttons.insert(0, [KeyboardButton("🗂 Поделиться контактом", request_contact=True, **kwargs)])
+	request_contact = kwargs.pop("request_contact", None)
+	if request_contact:
+		buttons.append([KeyboardButton("👤 Поделиться контактом", request_contact=True, **kwargs)])
+
+	for row in data:
+		text = None
+		if isinstance(row, list):
+			buttons.extend(build_keyboard(row, cols=columns, **kwargs))
+		elif isinstance(row, dict):
+			text = row.get("text")
+		else:
+			text = row
+
+		if text:
+			row = [KeyboardButton(text, **kwargs)]
+			buttons.append(row)
 
 	return ReplyKeyboardMarkup(
 		buttons, resize_keyboard=resize_keyboard, one_time_keyboard=one_time_keyboard, is_persistent=is_persistent
@@ -325,6 +350,45 @@ def update_inline_markup(
 		new_inline_keyboard.append(new_row)
 
 	return InlineKeyboardMarkup(new_inline_keyboard)
+
+
+def remove_button_from_keyboard(keyboard: InlineKeyboardMarkup, callback_data: str) -> Optional[InlineKeyboardMarkup]:
+	"""
+	Removes an inline markup button by its callback_data.
+
+	:param keyboard: The keyboard from which the button needs to be removed.
+	:param callback_data: The callback_data of the button that needs to be removed.
+	:return: The updated keyboard without the removed button.
+	"""
+
+	if not keyboard:
+		return None
+
+	updated_inline_markup = []
+	for row in keyboard.inline_keyboard:
+		updated_row = []
+		for button in row:
+			if button.callback_data != callback_data:
+				updated_row.append(button)
+		updated_inline_markup.append(updated_row)
+	return InlineKeyboardMarkup(updated_inline_markup)
+
+
+def add_button_to_keyboard(inline_markup: InlineKeyboardMarkup, text: str, callback_data: str) -> InlineKeyboardMarkup:
+	"""
+	Adds a button to the keyboard with the specified text and callback_data.
+
+	:param inline_markup: The keyboard to which the button needs to be added.
+	:param text: The text of the button.
+	:param callback_data: The callback_data of the button.
+	:return: The updated keyboard with the added button.
+	"""
+	updated_inline_markup = []
+	if inline_markup:
+		[updated_inline_markup.append(row) for row in inline_markup.inline_keyboard]
+	new_button = InlineKeyboardButton(text=text, callback_data=callback_data)
+	updated_inline_markup.append([new_button])
+	return InlineKeyboardMarkup(updated_inline_markup)
 
 
 def sub_years(years: int = 0) -> int:
@@ -544,28 +608,44 @@ def data_to_string(
 
 def format_output_text(
 		caption: str = "",
-		data: Union[str, dict, list] = None,
+		data: Union[int, str, dict, list, None] = None,
 		default_value: str = "",
 		default_sep: str = ":",
 		tag: str = ""
 ) -> str:
-	if (not data or isinstance(data, str) and str(data).strip('\n') == "") and not default_value:
+	if (data is None or isinstance(data, str) and data.strip() == "") and not default_value:
 		return ""
 
-	if isinstance(data, dict):
-		value = list(data.values())
-	else:
-		value = data
-
-	if isinstance(value, list):
-		value = value[0] if len(value) == 1 else "\n- " + "\n- ".join(value)
-
 	result = f'{caption}{default_sep} ' if caption else ""
-	result += f'{tag}{value or default_value}{tag}'
+	value = data.values() if isinstance(data, dict) else data.copy() if isinstance(data, list) else data
+
+	if value is None:
+		value = ""
+
+	elif isinstance(value, list):
+		value = f'\n- {tag}' + f'{tag}\n- {tag}'.join(value) + tag
+
+	else:
+		value = f'{tag}{data}{tag}'
+
+	result += value if data is not None else default_value
 	return "\n" + result.lstrip()
 
 
-def format_output_link(caption: str = '', link_text: str = '', src: str = '', link_type: str = "https") -> str:
+def format_output_link(src: str, caption: str = '', icon: str = '', link_type: str = "url") -> str:
+	"""
+	Formats a link with an optional icon and caption.
+
+	Args:
+	    src: The URL or phone number or email address to link to.
+	    caption: An optional caption to display with the link.
+	    icon: An optional icon to display next to the link.
+	    link_type: The type of link to create, either "url" or "tel" or "email".
+
+	Returns:
+	    A string containing the formatted link.
+	"""
+
 	if not src:
 		return ""
 
@@ -573,14 +653,10 @@ def format_output_link(caption: str = '', link_text: str = '', src: str = '', li
 		url = f'tel:{src}'
 	elif link_type.lower() == "email":
 		url = f'mailto:{src}'
-	elif src.startswith('http://') or src.startswith('https://'):
-		url = src
 	else:
-		url = f"{link_type}://{src}"
+		url = src if src.startswith('http://') or src.startswith('https://') else f"http://{src}"
 
-	url = f'[{link_text or src}]({url})'
-
-	return format_output_text(caption, url, default_sep=" ")
+	return f'{icon} [{caption or src}]({url})\n'
 
 
 def find_obj_in_dict(list_dict: List[dict], params: Dict[str, Any], condition: str = "AND") -> dict:
@@ -993,26 +1069,39 @@ async def fetch_location(latitude: float, longitude: float) -> Optional[Dict[str
 		return {}
 
 
-def detect_social(url: str = None) -> Tuple[str, str, str]:
-	if not url:
-		return "", "", ""
+def detect_social(url: str) -> dict:
+	"""
+	Detects the social media platform and username associated with a given URL.
 
-	username = ''
-	if 'telegram.me/' in url or 't.me/' in url:
+	Args:
+	    url: The URL to detect the social media platform and username for.
+
+	Returns:
+	    A dictionary containing the name of the social media platform, the url and icon.
+	"""
+	if not url:
+		return {"src": "", "icon": "", "caption": ""}
+
+	icon = "📱"
+	username = ""
+	if 'telegram.me' in url or 't.me' in url:
 		messenger_name = 'Telegram'
 		username = '@'
-	elif 'instagram.com/' in url:
+	elif 'instagram.com' in url:
 		messenger_name = 'Instagram'
 		username = '@'
-	elif 'whatsapp.com/' in url or 'wa.me/' in url:
+	elif 'whatsapp.com' in url or 'wa.me/' in url:
 		messenger_name = 'WhatsApp'
-	elif 'vk.com/' in url:
+	elif 'vk.com' in url:
 		messenger_name = 'Вконтакте'
 		username = '@' if not url.split('/')[-1].startswith("id") else ""
 	else:
-		return "", "", ""
-	username += url.split('/')[-1]
-	return messenger_name, username, url
+		messenger_name = ""
+		username = url
+
+	if username != url:
+		username += url.split('/')[-1]
+	return {"src": username, "icon": icon, "caption": messenger_name}
 
 
 ################################ API ################################
@@ -1056,16 +1145,16 @@ async def fetch(url, headers=None, params=None, data=None, method='GET', timeout
 
 
 async def fetch_user_data(
-		user_id: Union[str, int] = "",
+		user_id: int = None,
 		endpoint: str = "",
 		params: dict = None,
-		method: str = "GET",
+		data: any = None,
 		headers: dict = None,
-		data: any = None
+		method: Literal["GET", "POST", "PATCH", "DELETE"] = "GET"
 ):
 	url = SERVER_URL or "http://localhost:8000"
-	api_url = replace_double_slashes("{}/api/users/{}/{}/".format(url, str(user_id), endpoint))
-	response = await fetch(api_url, params=params, method=method, headers=headers, data=data)
+	api_url = replace_double_slashes("{}/api/users/{}/{}/".format(url, str(user_id or ""), endpoint))
+	response = await fetch(api_url, params=params, data=data, headers=headers, method=method)
 	data, status_code, error, headers = response
 	if error or not data:
 		return {

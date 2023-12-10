@@ -46,7 +46,7 @@ class UserListSerializer(serializers.ModelSerializer):
 
 	class Meta:
 		model = User
-		fields = ['id', 'username', 'name', 'groups', 'total_rating']
+		fields = ['id', 'name', 'username', 'groups', 'total_rating']
 		ordering = ['-total_rating']
 
 	def get_groups(self, obj):
@@ -54,8 +54,8 @@ class UserListSerializer(serializers.ModelSerializer):
 
 	def to_representation(self, instance):
 		representation = super().to_representation(instance)
-		representation['username'] = instance.username
-		representation['name'] = instance.__str__()
+		representation['name'] = instance.name
+		representation['username'] = instance.username or ""
 		category = self.context.get('category')
 		if category:
 			representation['category'] = int(category)
@@ -66,12 +66,15 @@ class UserListSerializer(serializers.ModelSerializer):
 
 class UserDetailSerializer(UserListSerializer):
 	categories = CategorySerializer(many=True, read_only=True, partial=True)
+	main_region = RegionSerializer(read_only=True, partial=True)
 	regions = RegionSerializer(many=True, read_only=True, partial=True)
-	main_region = RegionSerializer(many=False, read_only=True, partial=True)
-	detail_rating = serializers.SerializerMethodField()
+	detail_rating = serializers.SerializerMethodField(read_only=True)
 	related_detail_rating = serializers.SerializerMethodField(read_only=True)
-	voted_users_count = serializers.SerializerMethodField()
 	is_rated = serializers.BooleanField(read_only=True)
+	voted_users_count = serializers.SerializerMethodField()
+	placed_orders_count = serializers.SerializerMethodField()
+	done_orders_count = serializers.SerializerMethodField()
+	executor_done_orders_count = serializers.SerializerMethodField()
 	in_favourite = serializers.BooleanField(read_only=True)
 	favourites = serializers.SerializerMethodField(read_only=True)
 
@@ -92,15 +95,29 @@ class UserDetailSerializer(UserListSerializer):
 	def get_voted_users_count(self, obj):
 		return obj.voted_users_count
 
+	def get_placed_orders_count(self, obj):
+		return obj.placed_orders_count
+
+	def get_done_orders_count(self, obj):
+		return obj.done_orders_count
+
+	def get_executor_done_orders_count(self, obj):
+		return obj.executor_done_orders_count
+
 	def get_favourites(self, obj):
 		return self.context.get('favourites', [])
 
 	def to_internal_value(self, data):
 		validated_data = super().to_internal_value(data)
 		# Преобразование списка категорий в список объектов Category
-		validated_data['categories'] = Category.objects.filter(id__in=data.get('categories', []))
+		if data.get('categories'):
+			validated_data['categories'] = Category.objects.filter(id__in=data['categories'])
 		# Преобразование списка регионов в список объектов Region
-		validated_data['regions'] = Region.objects.filter(id__in=data.get('regions', []))
+		if data.get('regions'):
+			validated_data['regions'] = Region.objects.filter(id__in=data['regions'])
+		# Преобразование id региона в объект Region
+		if data.get('main_region'):
+			validated_data['main_region'] = Region.objects.get(id=data.get('main_region'))
 
 		return validated_data
 
@@ -119,7 +136,10 @@ class UserDetailSerializer(UserListSerializer):
 		if categories:
 			instance.categories.set(categories)
 		if regions:
-			instance.regions.set(regions)  # Используем метод set() для обновления значений regions
+			instance.regions.set(regions)
+		else:
+			instance.regions.set([])
+
 		return super().update(instance, validated_data)
 
 
@@ -149,8 +169,8 @@ class FavouriteSerializer(serializers.ModelSerializer):
 	def to_representation(self, instance):
 		return {
 			'id': instance.supplier.id,
+			'name': instance.supplier.name,
 			'username': instance.supplier.username,
-			'name': str(instance.supplier),
 			'total_rating': instance.supplier.total_rating
 		}
 
@@ -203,11 +223,13 @@ class OrderSerializer(serializers.ModelSerializer):
 
 	def to_representation(self, instance):
 		order_data = super().to_representation(instance)
-		order_data['owner_name'] = instance.owner.__str__()
+		order_data['executor_id'] = instance.executor.user_id if instance.executor else None
+		order_data['owner_id'] = instance.owner.user_id if instance.owner else None
+		order_data['owner_name'] = instance.owner.name
 		executor = instance.executor
 
 		if executor and executor not in instance.responded_users.all():
-			order_data['executor_name'] = executor.name or executor.username
+			order_data['executor_name'] = executor.name
 
 		return order_data
 
@@ -220,10 +242,16 @@ class SupportSerializer(serializers.ModelSerializer):
 	def to_representation(self, instance):
 		support_data = super().to_representation(instance)
 		support_data['chat_id'] = instance.user.user_id
-		support_data['username'] = instance.user.username
+		support_data['name'] = instance.user.name
 		support_data['is_replied'] = bool(instance.answer)
 
 		return support_data
+
+
+class MessageSerializer(serializers.ModelSerializer):
+	class Meta:
+		model = Support
+		fields = '__all__'
 
 
 class FileUploadSerializer(serializers.Serializer):

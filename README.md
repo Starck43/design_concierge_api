@@ -36,7 +36,7 @@
 
 
 - `selected_user`
-объект с подробными данными о текущем пользователе {id, name, username, region, total_rating и др}
+объект с подробными данными о текущем пользователе {id, name, contact_name, region, total_rating и др}
 
 
 - `temp_message`
@@ -66,8 +66,9 @@
 Словарь названий полей модели User для изменения в профиле пользователя
 ```json5
 {
-    "username": "Имя пользователя",
     "name": "Полное название",
+    "contact_name": "Имя контактного лица",
+    "username": "Имя пользователя Telegram",
     "access": "Вид доступа",
     "description": "Описание",
     "business_start_year": "Год начала деятельности",

@@ -1,17 +1,17 @@
 import random
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 
 from bot.bot_settings import CHANNEL_ID
-from bot.constants.keyboards import SEGMENT_KEYBOARD, CANCEL_REG_KEYBOARD, CONTINUE_KEYBOARD
-from bot.constants.menus import cancel_reg_menu, continue_reg_menu
+from bot.constants.keyboards import SEGMENT_KEYBOARD, CANCEL_KEYBOARD, REG_GROUP_KEYBOARD
+from bot.constants.menus import cancel_menu, continue_menu, start_menu
 from bot.constants.messages import (
-	not_found_region_message, add_region_warn_message, interrupt_reg_message,
-	confirm_region_message, input_regions_message,
+	interrupt_reg_message,
+	input_regions_message,
 	submit_reg_data_message, success_registration_message, offer_to_cancel_action_message,
-	offer_to_select_segment_message, offer_to_input_address_message, restricted_registration_message,
+	offer_to_select_segment_message, offer_to_input_address_message, restricted_access_message,
 	send_unknown_question_message, incorrect_socials_warn_message, continue_reg_message, repeat_input_phone_message,
 	share_files_message
 )
@@ -19,14 +19,14 @@ from bot.constants.patterns import DONE_PATTERN, CONTINUE_PATTERN
 from bot.handlers.common import (
 	send_error_to_admin, delete_messages_by_key, catch_server_error, create_registration_link,
 	edit_or_reply_message, load_categories, set_priority_group, invite_user_to_chat, generate_categories_list,
-	regenerate_inline_keyboard
+	select_region
 )
 from bot.logger import log
 from bot.sms import SMSTransport
 from bot.states.group import Group
 from bot.states.registration import RegState
 from bot.utils import (
-	fuzzy_compare, extract_numbers, sub_years, extract_fields,
+	extract_numbers, sub_years, extract_fields,
 	format_output_text, fetch_user_data, format_phone_number, generate_reply_markup,
 	calculate_years_of_work, match_query
 )
@@ -35,7 +35,6 @@ from bot.utils import (
 async def generate_reg_data_report(message: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
 	user_details = context.user_data["details"]
 
-	title_name = "Название организации" if 2 in context.chat_data["selected_groups"] else "Полное название"
 	category_list = extract_fields(list(user_details.get("categories", {}).values()), field_names="name")
 	regions: dict = user_details["regions"]
 	main_region_name = regions.pop(user_details["main_region"])
@@ -46,15 +45,15 @@ async def generate_reg_data_report(message: Message, context: ContextTypes.DEFAU
 	await message.reply_text(
 		f'*Регистрация почти завершена!*\n'
 		f'_Проверьте Ваши данные и подтвердите регистрацию._\n'
-		f'{format_output_text(title_name, user_details.get("name"), tag="`")}'
-		f'{format_output_text("Имя пользователя", user_details.get("username"), tag="`")}'
+		f'{format_output_text("Название", user_details.get("name"), tag="`")}'
+		f'{format_output_text("Имя пользователя", user_details.get("contact_name"), tag="`")}'
 		f'{format_output_text("Сферы деятельности", category_list, default_value="<не указано>", tag="`")}'
 		f'{format_output_text("Основной регион", main_region_name, tag="`")}'
 		f'{format_output_text("Другие регионы", region_list, tag="`")}'
 		f'{format_output_text("Стаж работы", years_of_work, default_value="<не указано>", tag="`")}'
 		f'{format_output_text("Сегмент", segment, tag="`")}'
 		f'{format_output_text("Адрес", user_details.get("address"), tag="`")}'
-		f'{format_output_text("Сайт или соцсеть", user_details.get("socials_url"), default_value="<не указано>", tag="`")}',
+		f'{format_output_text("Сайт/соцсеть", user_details.get("socials_url"), default_value="<не указано>", tag="`")}',
 		reply_markup=ReplyKeyboardRemove()
 	)
 
@@ -67,36 +66,47 @@ async def cancel_registration_choice(update: Update, context: ContextTypes.DEFAU
 
 
 async def end_registration(update: Union[Update, CallbackQuery], context: ContextTypes.DEFAULT_TYPE):
+	if update.message:
+		user = update.effective_user
+		message_text = update.message.text
+
+	else:
+		query = update.callback_query
+		await query.answer()
+		update = query
+		user = update.from_user
+		message_text = "Завершить"
+
 	user_data = context.user_data
 	user_details = user_data.get("details")
-
 	chat_data = context.chat_data
+	last_message_ids = chat_data.setdefault("last_message_ids", {})
 	current_status = chat_data.get("status")
-	message_text = update.message.text
+
 	await delete_messages_by_key(context, "last_message_id")
+	await delete_messages_by_key(context, "last_message_ids")
+	await delete_messages_by_key(context, "warn_message_ids")
 
 	error = chat_data.get("error")
 	if error:
-		await send_error_to_admin(update.message, context, text=error)
+		await send_error_to_admin(update.message, context, error={}, text=error)
 		await create_registration_link(update.message, context)
 
 	if current_status == 'cancel_registration' or match_query(DONE_PATTERN, message_text):
-		log.info(f'User {user_details["username"]} (ID:{user_details["user_id"]}) interrupted registration.')
+		log.info(f'User {user.full_name} (ID:{user.id}) interrupted registration.')
 
 		await interrupt_reg_message(update.message)
 
 	elif current_status == "approve_registration" and (
-			match_query(CONTINUE_PATTERN, message_text) or
-			message_text == chat_data["verification_code"]
+			match_query(CONTINUE_PATTERN, message_text) or message_text == chat_data["verification_code"]
 	):
 		# сохранение данных пользователя на сервер
 		token = user_data.get('token', None)
 		headers = {'Authorization': 'Token {}'.format(token)} if token else None
 
-		# TODO: Добавить сегмент для поставщиков из группы 2
 		user_details.update({
+			"username": user.username or "",
 			"categories": [int(category) for category in user_details["categories"].keys()],
-			"main_region": int(user_details["main_region"]),
 			"regions": [int(region) for region in user_details["regions"].keys()],
 			"business_start_year": sub_years(int(user_details.get("work_experience", 0)))
 		})
@@ -104,26 +114,29 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 			user_details["business_start_year"] = sub_years(int(user_details["work_experience"]))
 		user_details.pop("work_experience", None)
 
-		res = await fetch_user_data('/create/', headers=headers, method='POST', data=user_details)
-
+		res = await fetch_user_data(endpoint='/create/', data=user_details, headers=headers, method='POST')
 		if res.get('status_code', None) == 201:
-			log.info(f'User {user_details["username"]} (ID:{user_details["user_id"]}) has been registered.')
+			log.info(f'User {user.full_name} (ID:{user.id}) has been registered.')
 			chat_data["status"] = "registered"
 
 			if user_data["priority_group"] == Group.DESIGNER and not user_details.get("socials_url"):
-				user = update.effective_user if update.message else update.from_user
 				log.info(f"Access restricted for user {user.full_name} (ID:{user.id}).")
 
-				await restricted_registration_message(update.message)
-				await share_files_message(
+				message = await restricted_access_message(update.message, reply_markup=start_menu)
+				last_message_ids["restricted_access"] = message.message_id
+				message = await share_files_message(
 					update.message,
-					"Вы можете прикрепить и отправить нам файлы сейчас или в любое удобное время."
+					"Вы можете поделиться файлами прямо сейчас или сделать это позже"
 				)
+				last_message_ids["share_files"] = message.message_id
 
 			else:
-				await success_registration_message(update.message)
+				message = await success_registration_message(update.message)
+				last_message_ids["success_registration"] = message.message_id
 
-			await invite_user_to_chat(update, user_details["user_id"], chat_id=CHANNEL_ID)
+			message = await invite_user_to_chat(update, user_id=user_details["user_id"], chat_id=CHANNEL_ID)
+			if message:
+				last_message_ids["invite_to_channel"] = message.message_id
 
 		else:
 			await catch_server_error(update.message, context, error=res)
@@ -132,7 +145,7 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 		await update.message.reply_text(
 			"Введен неверный смс код!\n"
 			"Пожалуйста, повторите ввод:",
-			reply_markup=cancel_reg_menu
+			reply_markup=cancel_menu
 		)
 		return chat_data["reg_state"]
 
@@ -143,49 +156,52 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 
 async def introduce_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	chat_data = context.chat_data
-	selected_groups = chat_data.get("selected_groups")
+	selected_groups = context.chat_data.setdefault("local_data", {}).get("selected_groups")
+	if 2 in selected_groups and len(selected_groups) > 1:
+		selected_groups = None
 
-	if match_query(CONTINUE_PATTERN, update.message.text):
-		if not selected_groups:
-			chat_data["last_message_id"] = await edit_or_reply_message(
-				context,
-				text="Отметьте направления Вашей деятельности:",
-				message=chat_data.get("last_message_id"),
-				message_type="info",
-				reply_markup=continue_reg_menu
-			)
+	# если группы выбраны и нажата кнопка Продолжить, то загрузим список категорий для выбранных групп
+	if match_query(CONTINUE_PATTERN, update.message.text) and selected_groups:
+		await delete_messages_by_key(context, "warn_message_id")
+		group_name_list = REG_GROUP_KEYBOARD.copy()
+		group_name_list[:] = [group_name_list[i] for i in range(len(group_name_list)) if i in selected_groups]
+		text = format_output_text("☑️ Направления деятельности", group_name_list, tag="`")
+		await edit_or_reply_message(
+			context,
+			text=text,
+			message=chat_data.get("last_message_id"),
+			reply_markup=continue_menu
+		)
+		chat_data.pop("last_message_id", None)
 
-		elif 2 in selected_groups and len(selected_groups) > 1:
-			chat_data["last_message_id"] = await edit_or_reply_message(
-				context,
-				text="Поставщик не может быть зарегистрирован одновременно с другими группами.\n",
-				message=chat_data.get("last_message_id"),
-				message_type="warn",
-				reply_markup=continue_reg_menu
-			)
+		categories = await load_categories(update.message, context, groups=selected_groups, exclude_empty=False)
+		if not categories:
+			return RegState.DONE
 
+		if 2 in selected_groups:
+			title = "*Укажите торговое название своей организации*"
+		elif 1 in selected_groups:
+			title = "*Укажите свое название или ФИО*"
 		else:
-			# загрузим список всех категорий для выбранных групп
-			categories = await load_categories(update.message, context, groups=selected_groups, exclude_empty=False)
+			title = "*Укажите Ваше название студии или ФИО*"
 
-			if not categories:
-				return RegState.DONE
-
-			if 2 in selected_groups:
-				title = "*Укажите название Вашей организации*"
-			else:
-				title = "*Укажите название студии или свое ФИО*"
-			await update.message.reply_text(title, reply_markup=cancel_reg_menu)
-
-			chat_data["reg_state"] = RegState.INPUT_NAME
+		await update.message.reply_text(title, reply_markup=cancel_menu)
+		chat_data["reg_state"] = RegState.INPUT_NAME
 
 	else:
-		chat_data["last_message_id"] = await edit_or_reply_message(
+		await update.message.delete()
+		text = "Поставщик не может быть зарегистрирован одновременно с другими группами!"
+		message_type: Literal["info", "warn", "error"] = "warn"
+		if selected_groups:
+			text = "Нажмите на кнопку *Продолжить*"
+			message_type = "info"
+
+		chat_data["warn_message_id"] = await edit_or_reply_message(
 			context,
-			text="Отметьте направления Вашей деятельности.\n",
-			message=chat_data.get("last_message_id"),
-			message_type="info",
-			reply_markup=continue_reg_menu
+			text=text,
+			message=chat_data.get("warn_message_id"),
+			message_type=message_type,
+			reply_markup=continue_menu
 		)
 
 	return chat_data["reg_state"]
@@ -205,17 +221,17 @@ async def name_choice(update: Union[Update, CallbackQuery], context: ContextType
 
 	user_details = context.user_data["details"]
 	chat_data = context.chat_data
+	selected_groups = chat_data.setdefault("local_data", {}).get("selected_groups")
 
-	# TODO: [task 7]: Добавить сюда проверку близкого пересечения с username в БД, у кого нет сохраненного user_id
+	# TODO: [task 7]: Добавить сюда проверку близкого пересечения с name в БД, у кого нет сохраненного user_id
+	# после ввода полного названия преходим к имени пользователя
 	if not user_details.get("name"):
 		user_details["name"] = message_text
-		await delete_messages_by_key(context, "last_message_id")
-		await update.message.reply_text("*Придумайте свое имя пользователя*", reply_markup=cancel_reg_menu)
 
 		# Создаем список кнопок из существующих имен Телеграм
 		buttons = []
 		unique_button_texts = {}
-		button_names = ["first_name", "full_name", "username"]
+		button_names = ["first_name", "full_name"]
 		for button_name in button_names:
 			button_text = getattr(user, button_name, None)
 			if button_text:
@@ -226,24 +242,31 @@ async def name_choice(update: Union[Update, CallbackQuery], context: ContextType
 					unique_button_texts[button_text] = button
 					buttons.append([button])
 
-		message = await query.message.reply_text(
-			"или выберите из Ваших данных:",
-			reply_markup=InlineKeyboardMarkup(buttons),
-		)
-		chat_data["last_message_id"] = message.message_id  # Сохраним для изменения сообщения после продолжения
+		await update.message.reply_text("Укажите свое имя для обращения к Вам", reply_markup=cancel_menu)
+		text = "или выберите отсюда:"
+		message = await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+		chat_data["last_message_id"] = message.message_id
 
-	elif not user_details.get("username"):
-		user_details["username"] = chat_data.get("username", message_text)
-		title = f'👋 Приятно познакомиться, *{user_details["username"]}!*\n'
+	# если имя пользователя еще не было ранее введено, то запомним его и перейдем к этапу выбора категорий
+	elif not user_details.get("contact_name"):
+		user_details["contact_name"] = chat_data.get("contact_name", message_text)
+		title = f'Приятно познакомиться, *{user_details["contact_name"]}!*\n'
 		await edit_or_reply_message(
 			context,
 			text=title,
 			message=chat_data.get("last_message_id"),
-			reply_markup=continue_reg_menu
+			reply_markup=continue_menu
 		)
 
-		inline_markup = await generate_categories_list(query.message, context, button_type="checkbox")
-		subtitle = f'*Теперь отметьте категории, в которых Вы представлены:*'
+		groups = context.chat_data.setdefault("local_data", {}).get("selected_groups")
+		inline_markup = await generate_categories_list(
+			query.message,
+			context,
+			groups=groups,
+			show_all=True,
+			button_type="checkbox"
+		)
+		subtitle = f'*Теперь отметьте свои виды деятельности:*'
 		message = await query.message.reply_text(subtitle, reply_markup=inline_markup)
 		chat_data["last_message_id"] = message.message_id  # Сохраним для изменения сообщения после продолжения
 		chat_data["reg_state"] = RegState.SELECT_CATEGORIES
@@ -253,33 +276,32 @@ async def name_choice(update: Union[Update, CallbackQuery], context: ContextType
 
 async def categories_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	chat_data = context.chat_data
+	local_data = chat_data.setdefault("local_data", {})
+	selected_categories = local_data.get("selected_categories")
 
-	if match_query(CONTINUE_PATTERN, update.message.text):
-		local_data = chat_data.get("local_data", {})
+	# если выбраны категории и нажата кнопка Продолжить
+	if match_query(CONTINUE_PATTERN, update.message.text) and selected_categories:
+		await delete_messages_by_key(context, "warn_message_id")
 
-		if local_data.get("selected_categories", {}):
-			user_details = context.user_data["details"]
-			user_details["categories"] = local_data.pop("selected_categories", {})
-			set_priority_group(context)
+		user_details = context.user_data["details"]
+		user_details["categories"] = local_data.pop("selected_categories")
+		set_priority_group(context)
 
-			categories = extract_fields(user_details["categories"].values(), field_names="name")
-			text = format_output_text("☑️ Отмеченные категории", categories, tag="`")
-			message_id = await edit_or_reply_message(context, text, message=chat_data.get("last_message_id"))
-			chat_data["last_message_id"] = message_id
+		categories = extract_fields(user_details["categories"].values(), field_names="name")
+		text = format_output_text("☑️ Отмеченные категории", categories, tag="`")
+		await edit_or_reply_message(context, text, message=chat_data.get("last_message_id"))
 
-			await update.message.reply_text("Стаж/опыт работы?", reply_markup=continue_reg_menu)
-			chat_data["reg_state"] = RegState.INPUT_WORK_EXPERIENCE
-
-		else:
-			text = "Можно только выбирать из списка!"
-			await edit_or_reply_message(context, text=text, message_type="warn", lifetime=3)
+		await update.message.reply_text("Стаж/опыт работы?", reply_markup=continue_menu)
+		chat_data["reg_state"] = RegState.INPUT_WORK_EXPERIENCE
 
 	else:
+		await update.message.delete()
 		chat_data["warn_message_id"] = await edit_or_reply_message(
 			context,
-			text="Необходимо выбрать вариант из списка!",
+			text="Можно только выбрать категории из списка!",
+			message=chat_data.get("warn_message_id"),
 			message_type="warn",
-			reply_markup=continue_reg_menu
+			reply_markup=continue_menu
 		)
 
 	return chat_data["reg_state"]
@@ -289,22 +311,29 @@ async def work_experience_choice(update: Update, context: ContextTypes.DEFAULT_T
 	user_details = context.user_data["details"]
 	chat_data = context.chat_data
 	years = extract_numbers(update.message.text)[0]
-	await delete_messages_by_key(context, "warn_message_id")
 
+	# если введен корректный стаж работы ввиде числа или нажата кнопка Продолжить без ввода стажа
 	if match_query(CONTINUE_PATTERN, update.message.text) or years:
+		await delete_messages_by_key(context, "warn_message_id")
+
 		user_details["work_experience"] = years
 
 		# выведем сообщение с вводом основного региона
-		chat_data["last_message_id"] = await input_regions_message(update.message, status="main")
-		user_details.setdefault("main_region", None)
-		user_details.setdefault("regions", {})
+		message = await input_regions_message(context, status="main")
+		chat_data["last_message_id"] = message.message_id
+		chat_data["with_geo_reply_markup"] = message.reply_markup
 		chat_data["reg_state"] = RegState.SELECT_REGIONS
 
 	else:
 		await update.message.delete()
-		text = "Ответ должен обязательно содержать число!"
-		await edit_or_reply_message(context, text=text, message_type="warn", lifetime=2)
-
+		text = "В ответе отсутствует числовое значение!"
+		chat_data["warn_message_id"] = await edit_or_reply_message(
+			context,
+			text=text,
+			message=chat_data.get("warn_message_id"),
+			message_type="warn",
+			reply_markup=continue_menu
+		)
 	return chat_data["reg_state"]
 
 
@@ -315,27 +344,34 @@ async def regions_choice(update: Union[Update, CallbackQuery], context: ContextT
 		update = query
 
 	user_details = context.user_data["details"]
+	user_details.setdefault("main_region", None)
+	user_details.setdefault("regions", {})
 	chat_data = context.chat_data
-	await delete_messages_by_key(context, "warn_message_id")
+	menu_markup = chat_data.get("with_geo_reply_markup") or continue_menu
 
+	# если нажата кнопка Продолжить после добавления хотя бы основного региона, то перейдем ко вводу сайта
 	if match_query(CONTINUE_PATTERN, update.message.text):
 		if not user_details["regions"]:
-			await edit_or_reply_message(context, 'Необходимо указать основной регион!', message_type="warn", lifetime=2)
+			text = 'Необходимо указать основной регион!'
+			chat_data["warn_message_id"] = await edit_or_reply_message(
+				context,
+				text=text,
+				message=chat_data.get("warn_message_id"),
+				message_type="warn",
+				reply_markup=menu_markup
+			)
+			return chat_data["reg_state"]
 
+		await delete_messages_by_key(context, "warn_message_id")
+		chat_data.pop("with_geo_reply_markup", None)  # удалим временную клавиатуру с кнопкой Геопозиция
+
+		if context.user_data["priority_group"] == Group.DESIGNER:
+			title = "🌐 Укажите свой сайт/соцсеть или другой ресурс, где можно увидеть ваши проекты"
 		else:
-			# await delete_messages_by_key(context, "last_message_id")
-			chat_data.pop("selected_geolocation", None)
-			chat_data.pop("region_list", None)
-			chat_data.pop("new_region", None)
+			title = "🌐 Укажите свой рабочий сайт если имеется"
 
-			if context.user_data["priority_group"] == Group.DESIGNER:
-				title = "🌐 Укажите свой сайт/соцсеть или другой ресурс, где можно увидеть ваши проекты"
-			else:
-				title = "🌐 Укажите свой рабочий сайт если имеется"
-
-			message = await update.message.reply_text(title, reply_markup=continue_reg_menu)
-			context.chat_data["last_message_id"] = message.message_id
-			chat_data["reg_state"] = RegState.SELECT_SOCIALS
+		await update.message.reply_text(title, reply_markup=menu_markup)
+		chat_data["reg_state"] = RegState.SELECT_SOCIALS
 
 	# если введен текст в строке с названием региона или нажата кнопка поделиться текущей геопозицией
 	else:
@@ -351,44 +387,34 @@ async def regions_choice(update: Union[Update, CallbackQuery], context: ContextT
 		if not region_name:
 			return chat_data["reg_state"]
 
-		# получим объект региона по выбранному названию региона
-		found_region, c, _ = fuzzy_compare(region_name, chat_data["region_list"], "name", 0.3)
-		if not found_region:
-			chat_data["warn_message_id"] = await not_found_region_message(update.message, text=region_name)
-			return chat_data["reg_state"]
-
-		region_name = found_region["name"]
-		# если введенное название региона близко похоже на то что есть в общем перечне, то предложим подтвердить
-		if c < 0.8:
-			chat_data["new_region"] = found_region
-			if geolocation and not chat_data["selected_geolocation"]:
-				title = "Определился регион"
-			else:
-				title = "Вы имели ввиду"
-
-			title += f' *{region_name.upper()}*, все верно?'
-			chat_data["last_message_id"] = await confirm_region_message(update.message, title)
-
-		else:
-			# сохраним статус разового использования геолокации
-			if geolocation:
-				chat_data["selected_geolocation"] = True
-			await add_user_region(update, context, found_region)
+		# получим объект региона по введенному названию региона
+		found_region = await select_region(context, region_name, geolocation, menu_markup)
+		if found_region:
+			await add_user_region(context, found_region)
 
 	return chat_data["reg_state"]
 
 
-async def add_user_region(update: [Update, CallbackQuery], context: ContextTypes.DEFAULT_TYPE, new_region: dict):
+async def add_user_region(update: Update, context: ContextTypes.DEFAULT_TYPE, new_region: dict):
 	user_details = context.user_data["details"]
-	regions = user_details.setdefault("regions", {})
+	regions = user_details["regions"]
 	chat_data = context.chat_data
+	menu_markup = chat_data["with_geo_reply_markup"]
 	if not new_region:
 		return
 
 	region_id = new_region["id"]
 	region_name = new_region["name"]
+
 	if user_details['regions'].get(region_id):
-		chat_data["warn_message_id"] = await add_region_warn_message(update.message, text=region_name.upper())
+		text = f'Регион *{region_name.upper()}* уже был добавлен!'
+		chat_data["warn_message_id"] = await edit_or_reply_message(
+			context,
+			text=text,
+			message=chat_data.get("warn_message_id"),
+			message_type="warn",
+			reply_markup=menu_markup
+		)
 		return
 
 	regions[region_id] = region_name  # добавим объект в список регионов пользователя
@@ -397,18 +423,23 @@ async def add_user_region(update: [Update, CallbackQuery], context: ContextTypes
 		context,
 		text=text,
 		message=chat_data.get("last_message_id"),
-		reply_markup=continue_reg_menu
+		reply_markup=menu_markup
 	)
+	new_region.clear()
 
 	if not user_details["main_region"]:  # если еще не добавляли основной регион
+		await delete_messages_by_key(context, "warn_message_id")
 		user_details["main_region"] = region_id
 
+		# если геопозицией уже ранее воспользовались, то оставить только клавиатуру с Продолжить и Отменить
+		menu_markup = continue_menu if chat_data.get("selected_geolocation") else None
 		# выведем сообщение о доп регионах
-		await input_regions_message(
-			update.message,
-			status="additional",
-			reply_markup=continue_reg_menu if chat_data.get("selected_geolocation") else None
-		)
+		message = await input_regions_message(context, status="additional", reply_markup=menu_markup)
+		chat_data["last_message_id"] = message.message_id
+		chat_data["with_geo_reply_markup"] = message.reply_markup
+
+	else:  # очистим, чтобы сообщения с названиями добавляемых регионов в блоке выше не затирали друг друга
+		chat_data.pop("last_message_id", None)
 
 
 async def socials_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
@@ -420,9 +451,8 @@ async def socials_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 	if is_continue or message_text.startswith("http"):
 		if not is_continue:
 			user_data["details"]["socials_url"] = message_text
-
-		elif user_data["priority_group"] == Group.DESIGNER:
-			user_data["details"]["access"] = -1
+		else:
+			user_data["details"]["access"] = -1 if user_data["priority_group"] == Group.DESIGNER else 0
 
 		if user_data["priority_group"] == Group.SUPPLIER:
 			# выберем свой сегмент
@@ -490,7 +520,7 @@ async def input_phone(update: [Update, CallbackQuery], context: ContextTypes.DEF
 	await delete_messages_by_key(context, "warn_message_id")
 
 	if not update.message:
-		inline_markup = generate_reply_markup(CANCEL_REG_KEYBOARD, share_contact=True)
+		inline_markup = generate_reply_markup(CANCEL_KEYBOARD, request_contact=True)
 		text = "Для верификации введенных данных укажите номер телефона или поделитесь контактом в Телеграм"
 		chat_data["last_message_id"] = await edit_or_reply_message(
 			context,
@@ -514,7 +544,7 @@ async def input_phone(update: [Update, CallbackQuery], context: ContextTypes.DEF
 		if phone:
 			user_data["details"]["phone"] = phone
 			await update.message.delete()
-			await update.message.reply_text(f'☑️ +{phone}', reply_markup=cancel_reg_menu)
+			await update.message.reply_text(f'☑️ +{phone}', reply_markup=cancel_menu)
 			# отправим смс на указанный номер
 			sms = SMSTransport()
 			chat_data["verification_code"] = str(random.randint(1000, 9999))
@@ -533,7 +563,7 @@ async def input_phone(update: [Update, CallbackQuery], context: ContextTypes.DEF
 
 			else:
 				title = "Введите полученный код из смс:"
-				message = await update.message.reply_text(title, reply_markup=cancel_reg_menu)
+				message = await update.message.reply_text(title, reply_markup=cancel_menu)
 				await repeat_input_phone_message(update.message)
 
 			chat_data["reg_state"] = RegState.SUBMIT_REGISTRATION
@@ -543,7 +573,7 @@ async def input_phone(update: [Update, CallbackQuery], context: ContextTypes.DEF
 				query.message,
 				context,
 				text="⚠️ Введен некорректный номер телефона! Повторите еще раз",
-				reply_markup=cancel_reg_menu
+				reply_markup=cancel_menu
 			)
 			user_data["details"]["phone"] = ""
 
@@ -564,58 +594,19 @@ async def update_location_in_reg_data(update: Update, context: ContextTypes.DEFA
 			context,
 			text="Не удалось определить местоположение.\nВведите регион самостоятельно!",
 			message_type="error",
-			reply_markup=continue_reg_menu
+			reply_markup=continue_menu
 		)
 
 	return context.chat_data["reg_state"]
 
 
-async def select_user_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	""" Колбэк выбора группы и добавления в глобальный список selected_groups """
-
+async def choose_user_name_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	query = update.callback_query
 	await query.answer()
 
-	reg_group = int(query.data)
-	selected_groups = context.chat_data.setdefault("selected_groups", [])
-	if reg_group in selected_groups:
-		selected_groups.pop(selected_groups.index(reg_group))
-	else:
-		selected_groups.append(reg_group)
-
-	await regenerate_inline_keyboard(query.message, active_value=query.data, button_type="checkbox")
-
-
-async def choose_telegram_username_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	query = update.callback_query
-	await query.answer()
-
-	context.chat_data["username"] = update.effective_user[query.data]
+	context.chat_data["contact_name"] = update.effective_user[query.data]
 
 	return await name_choice(update, context)
-
-
-async def confirm_region_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-	""" Колбэк подтверждения автоматически предложенного региона """
-
-	query = update.callback_query
-	await query.answer()
-
-	button_data = query.data.lstrip("choose_region_")
-	geolocation = context.user_data.get("geolocation")
-	chat_data = context.chat_data
-
-	if button_data == 'yes':
-		await add_user_region(query, context, chat_data["new_region"])
-		if geolocation:
-			chat_data["selected_geolocation"] = True
-
-	else:
-		await query.edit_message_text("Хорошо. Тогда введите название самостоятельно.")
-		if geolocation:
-			context.user_data["geolocation"].clear()
-
-	chat_data["new_region"].clear()
 
 
 async def choose_segment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -644,7 +635,7 @@ async def interrupt_registration_callback(update: Update, context: ContextTypes.
 	if query.data == 'yes':
 		context.chat_data["status"] = "cancel_registration"
 		# await query.message.delete()
-		return await end_registration(query, context)
+		return await end_registration(update, context)
 
 	else:
 		await query.message.edit_text("Хорошо!😌\nТогда продолжим регистрацию...")

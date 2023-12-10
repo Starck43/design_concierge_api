@@ -1,14 +1,13 @@
+from bot.bot_settings import TRADE_GROUP_ID, SANDBOX_GROUP_ID
+
 HELP_CONTEXT = (
 	"Используйте `/start` для начала диалога.\n",
 	"Используйте `/help` для подсказок.\n",
 )
 
-PROFILE_FIELD_SET = [
-	["username", "categories", "main_region", "socials_url", "regions", ],
-	["username", "categories", "main_region", "regions", "description", "address", "socials_url", "site_url"],
-	["username", "name", "segment", "categories", "main_region", "regions", "description", "address", "socials_url",
-	 "site_url"],
-]
+CHAT_GROUPS_DATA = {TRADE_GROUP_ID: "Объявления", SANDBOX_GROUP_ID: "Беседка"}
+
+EXCLUDED_GROUP_FIELDS = [["segment"], ["segment"], ["segment"]]
 
 CAT_GROUP_DATA = [
 	{"name": "designers", "title": "Дизайнеры/архитекторы"},
@@ -17,8 +16,10 @@ CAT_GROUP_DATA = [
 ]
 
 SEARCH_FIELD_LIST = ["categories", "rating", "segment", "keywords"]
-TARIFF_LIST = ["Базовый", "Расширенный", "Премиум"]
-ORDER_STATUS = ["снят 🔴", "в поиске исполнителя 🟢", "ожидает ответ от исполнителя ⏳", "заказ в работе 🟠", "истек срок ожидания ⚪️", "в стадии приемки ⏳", "завершен 🏁", "досрочно завершен ✔️"]
+ORDER_STATUS = [
+	"снят 🔴", "в поиске исполнителя 🟢", "ожидает ответ от исполнителя ⏳", "заказ в работе 🟠",
+	"истек срок ожидания ⚪️", "в стадии приемки ⏳", "завершен 🏁", "досрочно завершен ✔️"
+]
 ORDER_RELATED_USERS_TITLE = ["Откликнулись на заявку", "Исполнитель заказа"]
 
 ORDER_RESPONSE_MESSAGE_TEXT = [

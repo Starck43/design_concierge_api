@@ -1,4 +1,5 @@
 import re
+from functools import partial
 from typing import Union
 
 from telegram import Update
@@ -6,22 +7,22 @@ from telegram.ext import (
 	CommandHandler, MessageHandler, ConversationHandler, CallbackQueryHandler, filters, ContextTypes
 )
 
-from bot.constants.keyboards import REG_GROUP_KEYBOARD
-from bot.constants.menus import continue_reg_menu
-from bot.constants.messages import yet_registered_message
+from bot.constants.menus import continue_menu
+from bot.constants.messages import yet_registered_message, select_user_group_message
 from bot.constants.patterns import (CANCEL_PATTERN, REGISTRATION_PATTERN, DONE_PATTERN)
-from bot.handlers.common import catch_server_error, load_user_field_names, load_regions, update_category_list_callback, \
-	set_priority_group
+from bot.handlers.common import (
+	catch_server_error, load_user_field_names, load_regions, select_user_categories_callback,
+	select_user_group_callback, confirm_region_callback
+)
 from bot.handlers.registration import (
-	end_registration, choose_telegram_username_callback, confirm_region_callback, approve_verification_code_callback,
-	cancel_registration_choice, select_user_group_callback, name_choice,
-	regions_choice,
-	choose_segment_callback, segment_choice, socials_choice, address_choice, work_experience_choice, categories_choice,
-	input_phone, repeat_input_phone_callback, interrupt_registration_callback, introduce_choice, verify_reg_data_choice
+	end_registration, name_choice, regions_choice, socials_choice, segment_choice, address_choice, categories_choice,
+	work_experience_choice, cancel_registration_choice, introduce_choice, add_user_region, input_phone,
+	choose_segment_callback, choose_user_name_callback, approve_verification_code_callback,
+	repeat_input_phone_callback, interrupt_registration_callback
 )
 from bot.logger import log
 from bot.states.registration import RegState
-from bot.utils import fetch_user_data, generate_inline_markup, update_inline_markup
+from bot.utils import fetch_user_data
 
 
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Union[str, int]:
@@ -31,17 +32,16 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
 	if not data:
 		return RegState.DONE
 
-	context.bot_data.setdefault("user_field_names", data)
 	chat_data = context.chat_data
 	user_data = context.user_data
 
-	# сохраним весь список регионов и список популярных регионов
-	chat_data["region_list"], chat_data["top_regions"] = await load_regions(update.message, context)
+	# сохраним весь список регионов
+	chat_data["region_list"], _ = await load_regions(update.message, context)
 	if not chat_data["region_list"]:
 		return RegState.DONE
 
 	res = await fetch_user_data(params={"user_id": user.id})
-	status_code = res.get('status_code', 500)
+	status_code = res.get("status_code", 500)
 
 	if status_code == 200 and res["data"].get('user_id'):
 		user_data["details"] = res["data"]
@@ -72,22 +72,12 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
 	################################ TESTING #################################
 
 	await update.message.reply_text(
-		"Для начала давайте познакомимся.",
-		reply_markup=continue_reg_menu,
+		"🤝 Для начала давайте познакомимся.",
+		reply_markup=continue_menu,
 	)
-
-	inline_markup = generate_inline_markup(REG_GROUP_KEYBOARD, vertical=True)
-	inline_markup = update_inline_markup(
-		inline_keyboard=inline_markup.inline_keyboard,
-		active_value="",
-		button_type="checkbox"
-	)
-	await update.message.reply_text(
-		"Кого Вы представляете?",
-		reply_markup=inline_markup
-	)
-
-	return RegState.SELECT_USER_GROUP
+	chat_data["last_message_id"] = await select_user_group_message(update.message)
+	chat_data["reg_state"] = RegState.SELECT_USER_GROUP
+	return chat_data["reg_state"]
 
 
 cancel_reg_handler = MessageHandler(
@@ -115,14 +105,14 @@ registration_dialog = ConversationHandler(
 				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
 				name_choice
 			),
-			CallbackQueryHandler(choose_telegram_username_callback, pattern="^username|first_name|full_name$"),
+			CallbackQueryHandler(choose_user_name_callback, pattern="^first_name|full_name$"),
 		],
 		RegState.SELECT_CATEGORIES: [
 			MessageHandler(
 				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
 				categories_choice
 			),
-			CallbackQueryHandler(update_category_list_callback, pattern=r"^category_\d+$"),
+			CallbackQueryHandler(select_user_categories_callback, pattern=r"^category_\d+$"),
 		],
 		RegState.INPUT_WORK_EXPERIENCE: [
 			MessageHandler(
@@ -135,8 +125,10 @@ registration_dialog = ConversationHandler(
 				filters.TEXT & ~filters.Regex(re.compile(CANCEL_PATTERN, re.I)) & ~filters.COMMAND,
 				regions_choice
 			),
-			CallbackQueryHandler(confirm_region_callback, pattern=r'^choose_region_(yes|no)$'),
-			# CallbackQueryHandler(choose_top_region_callback, pattern=r'^region_\d+$'),
+			CallbackQueryHandler(
+				partial(confirm_region_callback, add_region_func=add_user_region),
+				pattern=r'^choose_region_(yes|no)$'
+			),
 		],
 		RegState.SELECT_SEGMENT: [
 			MessageHandler(

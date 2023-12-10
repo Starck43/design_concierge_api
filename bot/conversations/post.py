@@ -16,7 +16,7 @@ post_dialog = ConversationHandler(
 	states={
 		PostState.CHOOSING: [
 			MessageHandler(
-				filters.TEXT & ~filters.COMMAND & filters.Regex(SEND_CONFIRMATION_KEYBOARD[0][0]),
+				filters.TEXT & ~filters.COMMAND & filters.Regex(SEND_CONFIRMATION_KEYBOARD[0]),
 				send_post
 			),
 			MessageHandler(

@@ -16,8 +16,7 @@ from bot.handlers.rating import validate_rated_user, update_ratings, show_user_r
 from bot.logger import log
 from bot.states.questionnaire import QuestState
 from bot.utils import (
-	find_obj_in_list, update_inline_markup, generate_inline_markup, remove_duplicates,
-	format_output_text, extract_fields
+	find_obj_in_list, generate_inline_markup, remove_duplicates, format_output_text, extract_fields
 )
 
 
@@ -108,7 +107,7 @@ async def show_users_in_category(update: Update, context: ContextTypes.DEFAULT_T
 	if cat_index == len(chat_data["categories"]):
 		# удалим дублирующихся поставщиков в списке отобранных для анкетирования
 		remove_duplicates(chat_data["selected_users"], "id")
-		users = extract_fields(chat_data["selected_users"], field_names="username")
+		users = extract_fields(chat_data["selected_users"], field_names="name")
 		text = f'{format_output_text("", users, tag="_")}'
 
 		message_id = await edit_or_reply_message(context, text=text, message=chat_data.get("last_message_id"))
@@ -141,7 +140,7 @@ async def show_users_in_category(update: Update, context: ContextTypes.DEFAULT_T
 	inline_markup = generate_inline_markup(
 		chat_data["questionnaire_cat_users"],
 		callback_data="id",
-		item_key="username"
+		item_key="name"
 	)
 
 	chat_data["last_message_id"] = await edit_or_reply_message(
@@ -200,7 +199,7 @@ async def show_rating_questions(update: Update, context: ContextTypes.DEFAULT_TY
 	chat_data["selected_user_index"] = user_index
 	chat_data["selected_user"] = chat_data["selected_users"][user_index]
 
-	title = f'*{user_index + 1}/{len(selected_users)}* `{chat_data["selected_user"]["username"]}`\n'
+	title = f'*{user_index + 1}/{len(selected_users)}* `{chat_data["selected_user"]["name"]}`\n'
 	await show_user_rating_questions(
 		update.message,
 		context,

@@ -8,11 +8,13 @@ class MenuState(Enum):
     START: str = 'Основное меню'
     SUPPLIERS_REGISTER: str = 'Реестр поставщиков'
     SERVICES: str = DESIGNER_KEYBOARD[0][1]
-    ORDERS: str = 'Заказы дизайнеров'
+    DESIGNER_ORDERS: str = 'Заказы дизайнеров'
+    ORDER: str = 'Карточка заказа'
     ADD_ORDER: str = 'Новый заказ'
     MODIFY_ORDER: str = 'Изменение заказа'
+    RECOMMEND_USER: str = 'Рекомендовать поставщика'
     DESIGNER_EVENTS: str = 'События'
-    DESIGNER_SANDBOX: str = 'Барахолка'
+    PERSONAL_ASSISTANT: str = 'Личный помощник'
     USER_DETAILS: str = "Карточка организации"
     USER_RATE: str = 'Обновить рейтинг'
     USERS_SEARCH: str = 'Подбор поставщика'
@@ -22,6 +24,7 @@ class MenuState(Enum):
     COOP_REQUESTS: str = 'Заявки на сотрудничество'
     UPLOAD_FILES: str = 'Отправка прикрепленных файлов'
     PROFILE: str = 'Карточка профиля'
+    MODIFY_PROFILE: str = 'Изменение данных пользователя'
     SETTINGS: str = 'Настройки'
     SUPPORT: str = 'Техподдержка'
 

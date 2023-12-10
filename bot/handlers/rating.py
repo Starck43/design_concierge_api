@@ -6,7 +6,7 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import RATING_KEYBOARD
-from bot.constants.messages import success_save_rating_message
+from bot.constants.messages import success_save_rating_message, restricted_access_message
 from bot.constants.static import MAX_RATE, RATE_BUTTONS
 from bot.entities import TGMessage
 from bot.handlers.common import (
@@ -166,7 +166,7 @@ async def show_user_rating_questions(
 			buttons += [save_button_data[0]]
 			callback_data += [save_button_data[1]]
 
-		rate_markup = generate_inline_markup(buttons, callback_data=callback_data, item_key="username")
+		rate_markup = generate_inline_markup(buttons, callback_data=callback_data, item_key="name")
 
 		# если у пользователя есть выставленный рейтинг, то обновим клавиатуру
 		if user_detail_rating:
@@ -181,7 +181,7 @@ async def show_user_rating_questions(
 		last_message_ids[question] = _message.message_id
 
 
-async def show_total_detail_rating(message: Message, context: ContextTypes.DEFAULT_TYPE, user: dict) -> None:
+async def show_total_detail_rating(context: ContextTypes.DEFAULT_TYPE, user: dict) -> None:
 	""" Сообщение в виде детального графического рейтинга по каждой оценке с кнопкой участников """
 
 	temp_messages = context.chat_data.setdefault("temp_messages", {})
@@ -224,6 +224,12 @@ async def answer_rating_questions_callback(update: Update, context: ContextTypes
 	query = update.callback_query
 	await query.answer()
 
+	if context.user_data["details"].get("access", -1) < 0:
+		await delete_messages_by_key(context, "warn_message_id")
+		message = await restricted_access_message(query.message)
+		context.chat_data["warn_message_id"] = message.message_id
+		return
+
 	chat_data = context.chat_data
 	selected_user = chat_data["selected_user"]
 	local_data = chat_data.setdefault("local_data", {})
@@ -240,7 +246,7 @@ async def answer_rating_questions_callback(update: Update, context: ContextTypes
 		if rating_dict:
 			rating_title += format_output_text(
 				"_Ваш текущий рейтинг: _",
-				value=f'{round(sum(rating_dict) / len(rating_dict), 1)}',
+				data=f'{round(sum(rating_dict) / len(rating_dict), 1)}',
 				default_sep="⭐"
 			)
 
@@ -331,7 +337,7 @@ async def change_rating_callback(update: Update, context: ContextTypes.DEFAULT_T
 		context,
 		text=modified_text,
 		message=user_details_message.message_id,
-		return_only_id=False
+		return_message_id=False
 	)
 	section["messages"].insert(1, TGMessage.create_message(message))
 
@@ -339,7 +345,7 @@ async def change_rating_callback(update: Update, context: ContextTypes.DEFAULT_T
 	message = await success_save_rating_message(query.message, user)
 	context.chat_data["last_message_id"] = message.message_id
 
-	await show_total_detail_rating(query.message, context, user=user)
+	await show_total_detail_rating(context, user=user)
 
 
 async def show_voted_designers_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

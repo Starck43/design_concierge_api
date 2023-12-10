@@ -111,7 +111,7 @@ async def upload_files_callback(
 		await context.bot.send_media_group(chat_id=ADMIN_CHAT_ID, media=media["document"])
 
 	# отправка текста сообщения с кнопкой Ответить
-	title = text or f'🗳 *Файлы пришли от @{context.user_data["details"]["username"]}*\nID:{user.id}'
+	title = text or f'🗳 Файлы пришли от *{context.user_data["details"]["name"]}*\nID:{user.id}'
 	await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f'{title}', reply_markup=reply_markup)
 
 	# сохраним прикрепленные файлы пользователя на сервере

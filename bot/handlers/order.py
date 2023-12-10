@@ -1,28 +1,161 @@
-from typing import Optional
+from typing import Optional, Tuple, Literal, List
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from bot.constants.keyboards import (
-	ORDER_ACTIONS_KEYBOARD, MODIFY_KEYBOARD, REMOVE_KEYBOARD, ORDER_RESPOND_KEYBOARD, ORDER_EXECUTOR_KEYBOARD,
-	CANCEL_KEYBOARD, CONTINUE_KEYBOARD
+	CANCEL_KEYBOARD, CONTINUE_KEYBOARD, REPLY_KEYBOARD, MODIFY_KEYBOARD, REMOVE_KEYBOARD, ORDER_ACTIONS_KEYBOARD,
+	ORDER_RESPOND_KEYBOARD, ORDER_EXECUTOR_KEYBOARD
 )
 from bot.constants.menus import back_menu
-from bot.constants.messages import send_notify_message
-from bot.constants.patterns import CANCEL_PATTERN, CONTINUE_PATTERN
-from bot.constants.static import ORDER_FIELD_DATA, ORDER_RESPONSE_MESSAGE_TEXT
+from bot.constants.messages import place_new_order_message, restricted_access_message
+from bot.constants.patterns import (
+	BACK_PATTERN, CANCEL_PATTERN, CONTINUE_PATTERN, NEW_DESIGNER_ORDER_PATTERN, DONE_ORDERS_PATTERN
+)
+from bot.constants.static import ORDER_FIELD_DATA, ORDER_RESPONSE_MESSAGE_TEXT, ORDER_STATUS, ORDER_RELATED_USERS_TITLE
 from bot.entities import TGMessage
 from bot.handlers.common import (
-	get_section, update_order, go_back_section, edit_or_reply_message, load_orders,
-	prepare_current_section, get_order_status, order_has_approved_executor, show_order_related_users, add_section,
-	delete_messages_by_key, update_section, generate_categories_list
+	delete_messages_by_key, get_section, prepare_current_section, add_section, update_section, go_back_section,
+	generate_categories_list, edit_or_reply_message, update_order, load_orders, load_user, send_message_to
 )
+from bot.handlers.details import show_user_card_message
+from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (
-	match_query, data_to_string, validate_number, validate_date, extract_fields, get_formatted_date,
-	generate_inline_markup, find_obj_in_list, format_output_text, update_text_by_keyword, generate_reply_markup
+	match_query, validate_number, validate_date, extract_fields, get_formatted_date, generate_inline_markup,
+	find_obj_in_list, format_output_text, update_text_by_keyword, generate_reply_markup, format_output_link,
+	detect_social, find_obj_in_dict, data_to_string
 )
+
+
+async def designer_orders_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+	""" Функция отображения архивных заказов дизайнера на Бирже услуг """
+
+	await update.message.delete()
+	user_details = context.user_data["details"]
+	priority_group = context.user_data["priority_group"]
+
+	# Подраздел - НОВЫЙ ЗАКАЗ, если это Дизайнер
+	if match_query(NEW_DESIGNER_ORDER_PATTERN, update.message.text) and priority_group == Group.DESIGNER:
+		return await new_order_callback(update, context)
+
+	section = await prepare_current_section(context, keep_messages=True)
+	query_message = section.get("query_message") or update.message.text
+	state = MenuState.DESIGNER_ORDERS
+
+	# Подраздел - АРХИВНЫЕ ЗАКАЗЫ
+	if match_query(DONE_ORDERS_PATTERN, query_message) and priority_group == Group.DESIGNER:
+		params = {"owner_id": user_details["id"], "status": [3, 4]}
+		orders = await load_orders(update.message, context, params=params)
+
+		messages = [update.message.message_id]
+		if orders:
+			extra_messages = await show_user_orders(
+				update.message,
+				orders,
+				title=query_message,
+				user_role="creator",
+			)
+			# объединим список id сообщений 'Мои заказы' с id сообщений из 'Архивные заказы'
+			messages += [message.message_id for message in extra_messages]
+
+		else:
+			message = await update.message.reply_text(f'❕Список пустой.', reply_markup=back_menu)
+			messages.append(message.message_id)
+
+		# дополним список текущих сообщений архивными
+		update_section(context, messages=section["messages"] + messages)
+
+	else:
+		return await go_back_section(update, context)
+
+	return state
+
+
+async def order_details_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+	""" Функция обработки сообщений в чате между заказчиком и исполнителем """
+
+	section = get_section(context)
+	section["messages"].append(update.message.message_id)
+	query_message = update.message.text
+	user_details = context.user_data["details"]
+	local_data = context.chat_data.setdefault("local_data", {})
+	order_id = context.chat_data["selected_order"]
+	reply_to_message_id = local_data.get("reply_to_message_id", None)
+
+	order = await load_orders(update.message, context, order_id=order_id)
+	user_is_owner = order["owner"] == user_details["id"]
+	user_id = order["executor_id"] if user_is_owner else order["owner_id"]
+	name = user_details["contact_name"] or user_details["name"]
+	username = user_details["username"]
+	message_id = update.message.message_id
+
+	# если заказчик выбрал претендента, то все сообщения будут считаться перепиской
+	if not match_query(BACK_PATTERN, query_message) and order["executor"]:
+		inline_markup = generate_inline_markup(
+			REPLY_KEYBOARD,
+			callback_data=f'order_{order_id}__message_id_{message_id}'
+		)
+		try:
+			await send_message_to(
+				context,
+				user_id=user_id,
+				text=query_message,
+				from_name=name,
+				from_username=username,
+				reply_to_message_id=reply_to_message_id,
+				reply_markup=inline_markup
+			)
+		except TelegramError:
+			# Message to reply not found
+			# TODO: отправить повторно с текстом пред. сообщения взятого с сервера по reply_to_message_id
+			await send_message_to(
+				context,
+				user_id=user_id,
+				text=query_message,
+				from_name=name,
+				from_username=username,
+				reply_markup=inline_markup
+			)
+
+		context.chat_data["last_message_id"] = await edit_or_reply_message(
+			context,
+			text="Сообщение отправлено!",
+			message=context.chat_data.get("last_message_id"),
+			delete_before_reply=True,
+			reply_markup=section["reply_markup"]
+		)
+
+	else:
+		return await go_back_section(update, context)
+
+	return section["state"]
+
+
+async def reply_to_order_message_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	""" Колбэк ответа пользователей на сообщения друг другу """
+
+	query = update.callback_query
+	await query.answer()
+
+	query_data = query.data.rsplit("__")
+	order_id = int(query_data[0].lstrip("order_"))
+	message_id = int(query_data[-1].lstrip("message_id_"))
+
+	section = get_section(context)
+	local_data = context.chat_data.setdefault("local_data", {})
+	context.chat_data["selected_order"] = order_id
+	local_data["reply_to_message_id"] = message_id
+
+	context.chat_data["last_message_id"] = await edit_or_reply_message(
+		context,
+		text="Ваш ответ на сообщение:",
+		message=context.chat_data.get("last_message_id", None),
+		delete_before_reply=True,
+		reply_markup=section["reply_markup"]
+	)
+	return MenuState.ORDER
 
 
 async def add_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
@@ -34,19 +167,14 @@ async def add_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_
 	chat_data = context.chat_data
 	local_data = chat_data.setdefault("local_data", {})
 	field_name = local_data.get("order_field_name")
-	order_id = local_data.get("order_id")
+	order_id = chat_data.get("selected_order")
 
 	# если нажата кнопка Отменить после выбора категорий у заказа, то прервем операцию и аернемся на уровень выше
 	if match_query(CANCEL_PATTERN, query_message):
 		if order_id:  # удалим созданный заказ при отмене
 			await update_order(update.message, context, int(order_id), method="DELETE")
 
-		state = await go_back_section(update, context, "back")
-		message = await update.message.reply_text(
-			"Создание заказа было отменено!",
-			reply_markup=get_section(context).get("reply_markup")
-		)
-		chat_data["last_message_id"] = message.message_id
+		state = await go_back_section(update, context, message_text="🚫 Создание заказа было отменено!")
 		return state
 
 	# если продолжаем и категории еще не сохранены в локальной переменной order_data
@@ -73,6 +201,7 @@ async def add_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_
 		return section["state"]
 
 	if field_name == "title":
+		local_data["owner"] = context.user_data["details"]["id"]
 		field_name = "description"
 		title = "Добавьте подробное описание"
 
@@ -96,15 +225,11 @@ async def add_order_fields_choice(update: Update, context: ContextTypes.DEFAULT_
 
 	if not field_name:  # если конец цикла добавления полей
 		order = await load_orders(update.message, context, order_id=order_id)
-		state = await go_back_section(update, context, "back")
-		if order:
-			message = await update.message.reply_text(
-				f'✅ Ваш заказ _{order["title"]}_\n'
-				f'успешно размещен на бирже услуг!\n'
-				f'🗃 _{data_to_string(order.get("categories"), field_names="name", separator=", ")}_',
-				reply_markup=get_section(context).get("reply_markup")
-			)
-			chat_data["last_message_id"] = message.message_id
+		categories = f'🗃 _{data_to_string(order.get("categories"), field_names="name", separator=", ")}_'
+		message_text = f'✅ Заказ *{order["title"]}* успешно размещен на бирже услуг!\n{categories}'
+
+		state = await go_back_section(update, context, message_text=message_text)
+
 		return state
 
 	return section["state"]
@@ -164,7 +289,7 @@ async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAU
 
 	data_changed = True
 	order_data.update({field_name: field_value})
-	order_id = local_data.get("order_id", None)
+	order_id = chat_data.get("selected_order", None)
 	if order_id:
 		order = await load_orders(update.message, context, order_id=order_id)
 		if not order:
@@ -184,7 +309,7 @@ async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAU
 	await update.message.delete()
 	local_data["order_data"] = {}
 	if not order_id:
-		local_data["order_id"] = order["id"]
+		context.chat_data["selected_order"] = order["id"]
 
 	if data_changed:
 		message_text = f'✅ *{message_text}*'
@@ -213,6 +338,7 @@ async def modify_order_fields_choice(update: Update, context: ContextTypes.DEFAU
 
 async def show_order_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	""" Колбэк вывода детальной информации по заказу """
+
 	query = update.callback_query
 	if query:
 		await query.answer()
@@ -221,48 +347,57 @@ async def show_order_details_callback(update: Update, context: ContextTypes.DEFA
 
 	section = await prepare_current_section(context)
 	query_data = section.get("query_message") or query.data
-	order_id = int(query_data.lstrip("order_"))
+	data = query_data.rsplit("__")
+	order_id = int(data[0].lstrip("order_"))
+	user_role = section.get("user_role", "contender")
+	if len(data) > 1:
+		user_role = data[-1]
 
 	order = await load_orders(query.message, context, order_id=order_id)
 	if not order:
-		return section["state"]
+		return
 
 	order_status, _ = get_order_status(order)
 	order_price = f'{order["price"]}₽' if order["price"] else "по договоренности"
 	category_list = " / ".join(extract_fields(order["categories"], "name")).lower()
 
-	# сохраним временно данные заказа для других колбэков на текущем и следующих уровнях меню
-	local_data = context.chat_data.setdefault("local_data", {})
-	local_data.update({
-		"order_id": order_id,
-		"executor_id": order.get("executor", None)
-	})
-	user_role = section.get("user_role", "contender")
+	# сохраним id заказа для других колбэков на текущем и следующих уровнях меню
+	context.chat_data["selected_order"] = order_id
 	user_is_owner = order["owner"] == context.user_data["details"]["id"]
 	user_is_contender = order["executor"] == context.user_data["details"]["id"]
 	date_string, expire_date, current_date = get_formatted_date(order["expire_date"])
 
-	state = section["state"]
+	state = MenuState.ORDER
 	menu_markup = back_menu
 
 	message = await query.message.reply_text(f'*{order["title"]}*', reply_markup=menu_markup)
 	messages = [message]
 	inline_markup = None
+	info_message_text = None
 
 	if user_role != "creator" and user_is_contender:  # если пользователь является выбранным претендентом
 		if order["status"] == 1:  # и заказ активный
 			if order_has_approved_executor(order):  # и это подтвержденный исполнитель, то предложим сдать работу
 				inline_markup = generate_inline_markup(
-					ORDER_ACTIONS_KEYBOARD[4],
-					callback_data=f'order_{order_id}__action_4'
+					[[ORDER_ACTIONS_KEYBOARD[8]], [ORDER_ACTIONS_KEYBOARD[4]]],
+					callback_data=[
+						f'owner_contact_info_{order["owner"]}',
+						f'order_{order_id}__action_4'
+					]
 				)
 
 			else:  # иначе предложим принять/отклонить заказ
+				order_status = "необходимо заключить договор 🖋"
 				inline_markup = generate_inline_markup(
-					[[ORDER_ACTIONS_KEYBOARD[2]], [ORDER_ACTIONS_KEYBOARD[3]]],
-					callback_data=['2', '3'],
-					callback_data_prefix=f'order_{order_id}__action_'
+					[[ORDER_ACTIONS_KEYBOARD[8]], [ORDER_ACTIONS_KEYBOARD[2]], [ORDER_ACTIONS_KEYBOARD[3]]],
+					callback_data=[
+						f'owner_contact_info_{order["owner"]}',
+						f'apply_order_{order_id}',
+						f'order_{order_id}__action_3'
+					]
 				)
+				info_message_text = "❕ Перед началом работ рекомендуем связаться с заказчиком предоставленным способом, " \
+				                    "чтобы обсудить все детали заказа и только после этого принять предложение."
 
 	elif user_role == "creator" and user_is_owner:
 		if order["status"] == 0:  # заказ приостановлен, можно изменить и удалить
@@ -337,7 +472,7 @@ async def show_order_details_callback(update: Update, context: ContextTypes.DEFA
 
 	message = await query.message.reply_text(
 		f'`{order["description"]}`'
-		f'{format_output_text("_Категория_", category_list, tag="_")}\n'
+		f'{format_output_text("категория", category_list, tag="_")}\n'
 		f'{format_output_text("Автор заказа", order["owner_name"] if not user_is_owner else "", tag="*")}'
 		f'{format_output_text(ORDER_FIELD_DATA["price"], order_price, tag="*")}'
 		f'{format_output_text(ORDER_FIELD_DATA["expire_date"], date_string if date_string else "не установлен", tag="*")}\n'
@@ -351,13 +486,18 @@ async def show_order_details_callback(update: Update, context: ContextTypes.DEFA
 	if user_role == "creator" and order["status"] > 0:
 		messages += await show_order_related_users(query.message, context, order)
 
+	if info_message_text:
+		message = await query.message.reply_text(info_message_text)
+		context.chat_data["last_message_id"] = message.message_id
+
 	add_section(
 		context,
 		state=state,
 		messages=messages,
 		query_message=query_data,
 		reply_markup=menu_markup,
-		save_full_messages=True
+		save_full_messages=True,
+		user_role=user_role
 	)
 
 	return state
@@ -370,18 +510,16 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	await query.answer()
 
 	section = get_section(context)
-	query_data = query.data
-	query_list = query_data.split('__')
-
-	if len(query_list) < 2:
+	query_data = query.data.split('__')
+	if len(query_data) < 2:
 		return None
 
 	user_id = context.user_data["details"]["id"]
-	local_data = context.chat_data.setdefault("local_data", {})
-	executor_id = local_data.get("executor_id", None)
-	order_id = int(query_list[0].lstrip("order_"))
-	action_code = int(query_list[1].lstrip("action_"))
+	order_id = int(query_data[0].lstrip("order_"))
+	action_code = int(query_data[1].lstrip("action_"))
+
 	order = await load_orders(query.message, context, order_id)
+	executor_id = order["executor"]
 	status = order["status"]
 	notify_message = {}
 	decline_notify_message = {}
@@ -419,9 +557,9 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 		if action_index == 0:  # если претендент откликнулся на заказ
 			params = {"add_user": user_id}
-			username = context.user_data["details"]["name"] or context.user_data["details"]["username"]
-			message_text = f'Пользователь откликнулся на Ваш заказ:\n _"{order["title"]}"_\n'
-			notify_message = {"user_id": order["owner"], "from_name": username, "text": message_text}
+			name = context.user_data["details"]["name"]
+			message_text = f'Специалист откликнулся на Ваш заказ:\n _"{order["title"]}"_\n'
+			notify_message = {"user_id": order["owner_id"], "from_name": name, "text": message_text}
 			responded_user_counter = f' ({len(order["responded_users"]) + 1})'
 
 		else:  # если претендент на заказ отзывает свой отклик до выбора его исполнителем
@@ -439,7 +577,7 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 		status = 4
 		action_message["text"] = "Заказ был досрочно завершен!"
 		message_text = f'Информируем о том, что взятый Вами заказ:\n _"{order["title"]}"_\n' \
-		               f'был завершен владельцем в одностороннем порядке!\n\n' \
+		               f'был завершен заказчиком!\n\n' \
 		               f'_Для получения комментариев можете обратиться к заказчику напрямую._'
 		notify_message = {"user_id": executor_id, "from_name": order["owner_name"], "text": message_text}
 
@@ -449,7 +587,7 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 		action_message["text"] = "Вы отказались принять работы!\nУведомление о доработке заказа отправлено исполнителю!"
 		message_text = f'Информируем о том, что взятый Вами заказ:\n _"{order["title"]}"_\n' \
 		               f'не был принят и требует доработки!\n\n' \
-		               f'_Для уточнения деталей обратитесь к заказчику напрямую._'
+		               f'_Для уточнения деталей обратитесь к заказчику напрямую_'
 		notify_message = {"user_id": executor_id, "from_name": order["owner_name"], "text": message_text}
 
 	# если заказ принят заказчиком
@@ -464,23 +602,22 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	elif action_code == 4:
 		status = 2
 		action_message["text"] = "Вы инициировали процесс передачи выполненных работ...\nОжидайте ответ от заказчика!"
-		message_text = f'Информируем о том, что исполнитель предлагает Вам принять работы по заказу:\n' \
-		               f'_"{order["title"]}"_'
-		notify_message = {"user_id": order["owner"], "from_name": order["executor_name"], "text": message_text}
+		message_text = f'Исполнитель просит принять работу по заказу:\n_"{order["title"]}"_'
+		notify_message = {"user_id": order["owner_id"], "from_name": order["executor_name"], "text": message_text}
 
 	# если запрос начать работу отклонен выбранным претендентом
 	elif action_code == 3:
 		status = 1
 		params = {"clear_executor": user_id}
 		action_message["text"] = "Вы отклонили предложение на выполнение заказа!"
-		username = context.user_data["details"]["name"] or context.user_data["details"]["username"]
+		name = context.user_data["details"]["name"]
 		message_text = f'Информируем о том, что претендент на выполнение заказа:\n_"{order["title"]}"_\n' \
-		               f'отказался от начала работ!'
-		decline_notify_message = {"user_id": order["owner"], "from_name": username, "text": message_text}
+		               f'не принял предложение!'
+		decline_notify_message = {"user_id": order["owner_id"], "from_name": name, "text": message_text}
 
 		# создадим сообщение для других соискателей кроме отказавшегося претендента
 		message_text = f'Информируем о том, что рассматриваемый Вами заказ:\n _"{order["title"]}"_\n' \
-		               f'по прежнему актуален!\nЗаказчик рассматривает Вашу кандидатуру.'
+		               f'снова выставлен на биржу!'
 		notify_message = {"user_id": [], "from_name": order["owner_name"], "text": message_text}
 		for user in order["responded_users"]:
 			if user["id"] != user_id:
@@ -490,19 +627,27 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	elif action_code == 2:
 		status = 1
 		params = {"remove_user": user_id}  # удалим пользователя из списка соискателей
-		action_message["text"] = "Ваш статус исполнителя успешно подтвержден!"
-		username = context.user_data["details"]["name"] or context.user_data["details"]["username"]
-		message_text = f'Информируем о том, что претендент на выполнение заказа:\n_"{order["title"]}"_' \
-		               f'подтвердил согласие выполнить работу!'
-		notify_message = {"user_id": order["owner"], "from_name": username, "text": message_text}
+		action_message["text"] = "Вы взяли заказ и можете приступать к работе!"
+		name = context.user_data["details"]["name"]
+		message_text = f'Изменился статус заказа\n_"{order["title"]}\n"_' \
+		               f'Выбранный исполнитель принял условия договора и начал работу!'
+		notify_message = {"user_id": order["owner_id"], "from_name": name, "text": message_text}
 
 		# создадим сообщение с отказом всем соискателям кроме исполнителя
-		message_text = f'Информируем о том, что рассматриваемый Вами заказ:\n _"{order["title"]}"_\n' \
-		               f'был предложен другому пользователю.\nВозможно в будущем еще удастся поработать с Вами.\nУдачи!'
+		message_text = f'Информируем о том, что заказ:\n _"{order["title"]}"_\n' \
+		               f'был предложен другому исполнителю.\nВозможно в будущем удастся поработать с Вами.\nУдачи!'
 		decline_notify_message = {"user_id": [], "from_name": order["owner_name"], "text": message_text}
 		for user in order["responded_users"]:
 			if user["id"] != user_id:
 				decline_notify_message["user_id"].append(user["id"])
+
+		# удалим сообщение с предложением принять условия договора
+		await delete_messages_by_key(context, context.chat_data.get("last_message_ids").get("order_offer_text"))
+
+		inline_markup = generate_inline_markup(
+			[ORDER_ACTIONS_KEYBOARD[8]],
+			callback_data=[f'owner_contact_info_{order["owner"]}']
+		)
 
 	# если приостановлен заказ, то добавим кнопки: активировать, изменить и удалить
 	elif action_code == 1:
@@ -541,24 +686,26 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 			# обновим статус в сообщении с описанием заказа
 			order_status, _ = get_order_status(order)
-			try:
-				order_details_message = await query.message.edit_text(
-					text=update_text_by_keyword(query.message.text_markdown, "Статус:", f'Статус: *{order_status}*'),
-					reply_markup=inline_markup
-				)
-				# обновим сообщения в текущей секции
-				order_details_message = TGMessage.create_message(order_details_message)
 
-			except TelegramError:
-				pass
+			order_details_message = await edit_or_reply_message(
+				context,
+				text=update_text_by_keyword(order_details_message.text, "Статус:", f'Статус: *{order_status}*'),
+				message=order_details_message.message_id,
+				return_message_id=False,
+				reply_markup=inline_markup
+			)
+			# обновим сообщения в текущей секции
+			order_details_message = TGMessage.create_message(order_details_message)
 
 			# отправим сообщение пользователям с уведомлением о новом статусе заказа
 			if notify_message:
-				await send_notify_message(context, **notify_message)
+				inline_markup = generate_order_notification_markup(order, notify_message["user_id"])
+				await send_message_to(context, **notify_message, reply_markup=inline_markup)
 
 			# отправим сообщение соискателям с уведомлением об отказе
 			if decline_notify_message:
-				await send_notify_message(context, **decline_notify_message)
+				inline_markup = generate_order_notification_markup(order, decline_notify_message["user_id"])
+				await send_message_to(context, **decline_notify_message, reply_markup=inline_markup)
 
 		else:
 			action_message["text"] = error_text
@@ -566,18 +713,23 @@ async def manage_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 	# выведем сообщение о действии, изменении заказа или ошибке
 	if action_message.get("text"):
 		action_message.pop("error", None)
-		message = await edit_or_reply_message(context, **action_message)
-		context.chat_data["last_message_id"] = message.message_id
+		context.chat_data["last_message_id"] = await edit_or_reply_message(context, **action_message)
 
 	section["messages"] = [title_message, order_details_message] + tg_messages
 	update_section(context, messages=section["messages"])
 
 
 async def select_order_executor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	""" Колбэк выбора и снятия дизайнером пользователя на роль исполнителя заказа """
+	""" Колбэк выбора или отказа дизайнером от претендента на роль исполнителя заказа """
 
 	query = update.callback_query
 	await query.answer()
+
+	if context.user_data["details"].get("access", -1) < 0:
+		await delete_messages_by_key(context, "warn_message_id")
+		message = await restricted_access_message(update.message)
+		context.chat_data["warn_message_id"] = message.message_id
+		return
 
 	query_data = query.data
 	query_list = query.data.split('__')
@@ -630,7 +782,7 @@ async def select_order_executor_callback(update: Update, context: ContextTypes.D
 					text=message.text,
 					message=message.message_id,
 					reply_markup=InlineKeyboardMarkup([[button]]),
-					return_only_id=False
+					return_message_id=False
 				)
 
 			else:
@@ -642,6 +794,9 @@ async def select_order_executor_callback(update: Update, context: ContextTypes.D
 				_message = await query.message.edit_reply_markup(user_markup)
 
 			contender_messages.append(TGMessage.create_message(_message))
+
+		message_text = f'Вы были выбраны в качестве претендента на выполнение заказа:\n_"{order["title"]}"_\n' \
+		               f'Теперь Вы можете согласовать детали заказа и приступить к работе!'
 
 	# если пользователь уже выбран на роль исполнителя, то откажемся от него и отобразим оставшихся претендентов
 	else:
@@ -670,12 +825,13 @@ async def select_order_executor_callback(update: Update, context: ContextTypes.D
 					text=message.text,
 					message=message.message_id,
 					reply_markup=InlineKeyboardMarkup([buttons]),
-					return_only_id=False
+					return_message_id=False
 				)
 				contender_messages.append(TGMessage.create_message(_message))
 
 		# удалим текущее сообщение с исполнителем после отказа
 		await query.message.delete()
+		message_text = f'Заказчик отказался от Вашей кандидатуры на выполнение заказа:\n _"{order["title"]}"_'
 
 		# обновим кнопку в сообщении с описанием заказа
 		inline_markup = generate_inline_markup(
@@ -692,14 +848,78 @@ async def select_order_executor_callback(update: Update, context: ContextTypes.D
 		text=modified_text,
 		message=order_details_message.message_id,
 		reply_markup=inline_markup,
-		return_only_id=False
+		return_message_id=False
 	)
 	order_details_message = TGMessage.create_message(_message)
+
+	inline_markup = generate_inline_markup(
+		[ORDER_RESPOND_KEYBOARD[3]],
+		callback_data=[f'order_{order["id"]}__executor'],
+	)
+	await send_message_to(
+		context,
+		user_id=executor_id,
+		text=message_text,
+		from_name=order["owner_name"],
+		reply_markup=inline_markup
+	)
 
 	update_section(
 		context,
 		messages=[title_message, order_details_message, contenders_title_message] + contender_messages
 	)
+
+
+async def apply_order_offer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	""" Колбэк принятия условий договора исполнителем заказа """
+
+	query = update.callback_query
+	await query.answer()
+
+	query_data = query.data
+	order_id = int(query_data.lstrip("apply_order_"))
+	last_message_ids = context.chat_data.setdefault("last_message_ids", {})
+
+	# выведем файл с условиями оферты
+	message = await context.bot.send_document(
+		chat_id=query.message.chat_id,
+		caption="Договор оказания услуг",
+		document=open('terms.txt', 'rb')
+	)
+	last_message_ids["order_offer"] = message.message_id
+
+	inline_markup = generate_inline_markup(["Принять условия"], callback_data=[f'order_{order_id}__action_2'])
+	message = await query.message.reply_text(
+		"Необходимо принять условия договора, чтобы сделка была совершена!\n"
+		"Если Вы согласны, то нажмите на кнопку *Принять условия*",
+		reply_markup=inline_markup
+	)
+	last_message_ids["order_offer_text"] = message.message_id
+
+
+async def get_order_contact_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	""" Колбэк получения сообщения с контактными данными от владельца заказа """
+
+	query = update.callback_query
+	await query.answer()
+
+	last_message_ids = context.chat_data.setdefault("last_message_ids", {})
+	if last_message_ids.get("contact_add_info"):
+		return
+
+	owner_id = int(query.data.lstrip("owner_contact_info_"))
+	user = await load_user(query.message, context, user_id=owner_id, with_details=True)
+
+	if user is None:
+		text = "Не удалось получить контактные данные о заказчике!\nОтправляйте сообщение через строку ввода"
+	else:
+		text = "Заказчик открыл свои данные для работы.\n"
+		text += "Выбирайте удобный способ общения или общайтесь прямо здесь, отправляя текстовые сообщения в строке"
+		inline_message = await show_user_card_message(context, user=user)
+		last_message_ids["contact_info"] = inline_message.message_id
+
+	inline_message = await query.message.reply_text("ℹ️ " + text)
+	last_message_ids["contact_add_info"] = inline_message.message_id
 
 
 async def modify_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -764,12 +984,19 @@ async def new_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 	else:
 		query = update
 
+	if context.user_data["details"].get("access", -1) < 0:
+		await delete_messages_by_key(context, "warn_message_id")
+		message = await restricted_access_message(query.message)
+		context.chat_data["warn_message_id"] = message.message_id
+		return
+
 	chat_data = context.chat_data
 	local_data = chat_data.setdefault("local_data", {})
 	order_categories = local_data.get("order_data", {}).get("categories")
 	section = get_section(context)
+
 	if section["state"] != MenuState.ADD_ORDER:
-		section = await prepare_current_section(context, leave_messages=True)
+		section = await prepare_current_section(context, keep_messages=True)
 
 	state = MenuState.ADD_ORDER
 	selected_cat = section.get("selected_cat")
@@ -789,7 +1016,6 @@ async def new_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 	# иначе перейдем к выбору категорий
 	else:
-		# local_data["order_data"].update({"categories": []})
 		menu_markup = generate_reply_markup([CONTINUE_KEYBOARD], one_time_keyboard=False)
 		title = str(state).upper()
 
@@ -806,12 +1032,200 @@ async def new_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 	if section["state"] != MenuState.ADD_ORDER:
 		add_section(context, state=state, messages=messages, reply_markup=menu_markup)
-
 	else:
-		update_section(
-			context,
-			messages=section["messages"] + messages,
-			reply_markup=menu_markup
-		)
+		update_section(context, messages=section["messages"] + messages, reply_markup=menu_markup)
 
 	return state
+
+
+def order_has_approved_executor(order: dict) -> bool:
+	""" Вернет истина, если претендент отсутствует в списке откликнувшихся на заказ responded_users """
+	if not order["executor"]:
+		return False
+
+	responded_user = find_obj_in_dict(order["responded_users"], {"id": order["executor"]})
+	return not bool(responded_user)
+
+
+def get_order_status(order: dict) -> Tuple[str, str]:
+	"""
+	Получение статуса заказа в виде строки
+	Returns:
+		Tuple (статус, дата выполнения заказа)
+	"""
+	date_string, expire_date, current_date = get_formatted_date(order["expire_date"])
+	is_valid = not expire_date or current_date <= expire_date
+
+	if order["status"] == 0:
+		order_status = ORDER_STATUS[0]
+	elif order["status"] == 1:
+		if not is_valid:
+			order_status = ORDER_STATUS[4]
+		elif order["executor"]:
+			order_status = ORDER_STATUS[int(order_has_approved_executor(order) + 2)]
+		else:
+			order_status = ORDER_STATUS[1]
+	elif order["status"] == 2:
+		order_status = ORDER_STATUS[5]
+	elif order["status"] == 3:
+		order_status = ORDER_STATUS[6]
+	else:
+		order_status = ORDER_STATUS[7]
+
+	return order_status, date_string
+
+
+async def show_user_orders(
+		message: Message,
+		orders: list,
+		user_role: Literal["creator", "contender", "executor"],
+		user_id: int = None,
+		title: str = None,
+		reply_markup: ReplyKeyboardMarkup = back_menu
+) -> list:
+	""" Вывод на экран списка заказов пользователя по его id:
+		Args:
+			message: объект с сообщением,
+			orders: заказы дизайнера,
+			user_role: флаг указывающий на текущую роль пользователя,
+			user_id: id текущего пользователя,
+			title: заголовок для сообщений,
+			reply_markup: клавиатура для reply message.
+		Returns:
+			массив Message сообщений
+	 """
+	# TODO: проверить актуальная информация или нет
+	messages = []
+
+	if title:
+		reply_message = await message.reply_text(f'*{title.upper()}*\n', reply_markup=reply_markup)
+		messages.append(reply_message)
+
+	if not orders:
+		message_text = "❕Список заказов пустой"
+		reply_message = await message.reply_text(message_text, reply_markup=reply_markup)
+		messages.append(reply_message)
+
+		if user_role == "creator":
+			inline_message = await place_new_order_message(message)
+			messages.append(inline_message)
+
+		return messages
+
+	elif not user_role:
+		return messages
+
+	for index, order in enumerate(orders, 1):
+		order_has_executor = order_has_approved_executor(order)
+		order_button_text = ORDER_RESPOND_KEYBOARD[3]
+
+		if user_role == "creator":
+			order_button_text = ORDER_RESPOND_KEYBOARD[4]
+			if order["status"] == 2:
+				order_button_text = ORDER_RESPOND_KEYBOARD[5]
+
+			responded_user_counter = len(order["responded_users"])
+			if order["status"] < 2 and responded_user_counter and not order_has_executor:
+				# вставим счетчик между названием кнопки и ее иконкой справа
+				order_button_text = f'{order_button_text[:-2]} ({responded_user_counter}) {order_button_text[-1]}'
+
+		elif order["executor"] == user_id and not order_has_executor:
+			order_button_text = ORDER_RESPOND_KEYBOARD[2]
+
+		inline_markup = generate_inline_markup(
+			[order_button_text],
+			callback_data=[f'order_{order["id"]}__{user_role}']  # добавим роль обязательно
+		)
+
+		inline_message_text = format_output_text(f'{index}', order["title"] + "\n", tag="`", default_sep=".")
+
+		order_status, date_string = get_order_status(order)
+		# if user_role == "contender":
+		#   inline_message_text += f'\nЗаказчик: _{order["owner_name"]}_'
+
+		if not user_role == "creator" and not order_has_executor and order["executor"] == user_id:
+			order_status = "необходимо заключить договор ✍️"
+
+		if order_has_executor and order["executor"] != user_id and order.get("executor_name"):
+			inline_message_text += f'\nИсполнитель: _{order["executor_name"]}_'
+
+		order_price = f'{order["price"]}₽' if order["price"] else "по договоренности"
+		inline_message_text += f'\nСтоимость работ: _{order_price}_'
+
+		if date_string:
+			inline_message_text += f'\nСрок реализации: _{date_string}_'
+
+		if order_status:
+			inline_message_text += f'\nСтатус: _{order_status}_'
+
+		inline_message = await message.reply_text(inline_message_text, reply_markup=inline_markup)
+		messages.append(inline_message)
+
+	if user_role == "creator":
+		inline_message = await place_new_order_message(message)
+		messages.append(inline_message)
+
+	return messages
+
+
+async def show_order_related_users(message: Message, context: ContextTypes.DEFAULT_TYPE, order: dict) -> List[Message]:
+	""" Вывод данных претендентов на заказ или исполнителя с inline кнопками управления """
+
+	executor_id = order["executor"]
+	users = order["responded_users"]
+
+	if not executor_id and not users:
+		return []
+
+	order_has_executor = order_has_approved_executor(order)
+	selected_postfix = ""
+	inline_messages = []
+
+	# если пользователь был выбран дизайнером
+	if executor_id:
+		if order_has_executor:  # если подтвержденный исполнитель
+			executor = await load_user(message, context, user_id=executor_id)
+			if executor:
+				users = [executor]
+
+		else:
+			selected_postfix = "__is_selected"
+
+	# изменим заголовок списка претендентов или исполнителя
+	_message = await message.reply_text(f'_{ORDER_RELATED_USERS_TITLE[int(order_has_executor)]}:_')
+	inline_messages.append(_message)
+
+	for user in users:
+		buttons = [InlineKeyboardButton(ORDER_EXECUTOR_KEYBOARD[0], callback_data=f'user_{user["id"]}')]
+		if order["status"] == 1 and not order_has_executor:
+			user_is_contender = user["id"] == executor_id
+			if not executor_id or user_is_contender:
+				buttons.append(InlineKeyboardButton(
+					ORDER_EXECUTOR_KEYBOARD[int(user_is_contender) + 1],
+					callback_data=f'order_{order["id"]}__executor_{user["id"]}{selected_postfix}'
+				))
+
+		rating_text = str(user["total_rating"]) if user["total_rating"] else "отсутствует"
+		_message = await message.reply_text(
+			f'*{user["name"]}*'
+			f'{format_output_text("рейтинг", "⭐️" + rating_text)}',
+			reply_markup=InlineKeyboardMarkup([buttons])
+		)
+		inline_messages.append(_message)
+
+	return inline_messages
+
+
+def generate_order_notification_markup(order: dict, user_id: any) -> Optional[InlineKeyboardMarkup]:
+	if order["status"] > 0 and not isinstance(user_id, list):
+		if user_id == order["executor"]:
+			user_role = "executor"
+		else:
+			user_role = "creator" if user_id == order["owner_id"] else "contender"
+
+		return generate_inline_markup(
+			[ORDER_RESPOND_KEYBOARD[3]],
+			callback_data=[f'order_{order["id"]}__{user_role}']
+		)
+
+	return None
