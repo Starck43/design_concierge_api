@@ -10,7 +10,8 @@ from bot.constants.messages import (
 	success_questionnaire_message
 )
 from bot.handlers.common import (
-	load_categories, delete_messages_by_key, edit_or_reply_message, load_cat_users, regenerate_inline_keyboard
+	load_categories, delete_messages_by_key, edit_or_reply_message, load_cat_users, regenerate_inline_keyboard,
+	post_user_log_data
 )
 from bot.handlers.rating import validate_rated_user, update_ratings, show_user_rating_questions
 from bot.logger import log
@@ -21,6 +22,7 @@ from bot.utils import (
 
 
 async def start_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	user_name = context.user_data["details"]["name"]
 	chat_data = context.chat_data
 	temp_messages = chat_data.setdefault("temp_messages", {})
 	chat_data["previous_state"] = QuestState.START
@@ -28,7 +30,9 @@ async def start_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE
 	chat_data["status"] = "questionnaire"
 
 	user = update.message.from_user
-	log.info(f"User {user.full_name} (ID:{user.id}) started questionnaire.")
+	message = f"User {user_name} (ID:{user.id}) started questionnaire"
+	log.info(message)
+	await post_user_log_data(context, status_code=3, message=message)
 
 	# TODO: переместить логику сохранения categories в саму функцию load_categories
 	categories = await load_categories(update.message, context, groups=[1, 2])
@@ -57,13 +61,24 @@ async def cancel_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def end_questionnaire(update: Union[Update, CallbackQuery], context: ContextTypes):
 	user = update.message.from_user
+	user_name = context.user_data["details"]["name"]
 	chat_data = context.chat_data
+	current_error = chat_data.get("last_error", {})
 
-	if chat_data.get("error"):
-		log.info(f"User {user.full_name} (ID:{user.id}) finished questionnaire with error.")
+	if current_error:
+		message = f'User {user_name} (ID:{user.id}) was stopped during questionnaire: {current_error.get("text")}'
+		log.error(message, extra=current_error.get("code"))
+		await post_user_log_data(context, status_code=0, message=message, error_code=current_error.get("code"))
+
+	elif chat_data["current_state"] == QuestState.CANCEL_QUESTIONNAIRE:
+		message = f'User {user_name} (ID:{user.id}) interrupted questionnaire'
+		log.info(message)
+		await post_user_log_data(context, status_code=5, message=message)
 
 	else:
-		log.info(f"User {user.full_name} (ID:{user.id}) finished questionnaire.")
+		message = f"User {user_name} (ID:{user.id}) finished questionnaire"
+		log.info(message)
+		await post_user_log_data(context, status_code=4, message=message)
 
 		# продолжим диалог, если пользователь зарегистрировался или начал уже беседу
 		# 'priority_group' сохраняется в этих двух состояниях и удобно используется для проверки

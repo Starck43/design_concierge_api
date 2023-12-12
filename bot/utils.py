@@ -1035,7 +1035,7 @@ async def fetch_location(latitude: float, longitude: float) -> Optional[Dict[str
 	try:
 		cached_result = cache.get(cache_key)
 	except Exception as error:
-		log.info(f"Cache error occurred on getting location: {error}")
+		log.warning(f"Cache error occurred on getting location: {error}")
 		cached_result = None
 
 	if cached_result is not None:
@@ -1063,7 +1063,7 @@ async def fetch_location(latitude: float, longitude: float) -> Optional[Dict[str
 		try:
 			cache.set(cache_key, result)
 		except Exception as error:
-			log.info(f"Cache error occurred on saving location: {error}")
+			log.error(f"Cache error occurred on saving location: {error}")
 		return result
 	else:
 		return {}

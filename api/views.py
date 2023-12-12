@@ -9,7 +9,8 @@ from django.core.files.base import ContentFile
 from django.db import models
 from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F, Count, Field
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import (
 	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, RetrieveAPIView, ListCreateAPIView
@@ -17,10 +18,10 @@ from rest_framework.generics import (
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rating, Region, File, Order, Favourite, Group, Support, Message
+from api.models import Category, User, Rating, Region, File, Order, Favourite, Group, Support, Message, Log
 from .serializers import (
 	CategorySerializer, UserListSerializer, RatingSerializer, RegionSerializer, UserDetailSerializer,
-	FileUploadSerializer, OrderSerializer, FavouriteSerializer, SupportSerializer, MessageSerializer
+	FileUploadSerializer, OrderSerializer, FavouriteSerializer, SupportSerializer, MessageSerializer, LogSerializer
 )
 
 
@@ -563,3 +564,23 @@ class UserSearchView(APIView):
 		queryset = User.objects.filter(_AND).distinct()
 		serializer = UserListSerializer(queryset, many=True)
 		return Response(serializer.data)
+
+
+class LogView(APIView):
+	queryset = Log.objects.all()
+	serializer_class = LogSerializer
+
+	def post(self, request):
+		data = request.data.copy()
+		user_id = data.pop('user_id', None)
+		user = User.objects.filter(user_id=user_id).first()
+		if user:
+			data['user'] = user.id
+
+		serializer = LogSerializer(data=data, partial=True)
+		if serializer.is_valid():
+			serializer.save()
+			return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+

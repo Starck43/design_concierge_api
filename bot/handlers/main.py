@@ -513,42 +513,43 @@ async def change_supplier_segment_callback(update: Update, context: ContextTypes
 
 
 async def select_events_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	# Выбор события
+	""" Колбэк выбора мероприятий в своей области: мир/страна/город """
+
 	query = update.callback_query
 	await query.answer()
 
 	section = await prepare_current_section(context)
 	query_data = section.get("query_message") or query.data
-	event_type_id = int(query_data.lstrip("event_type_"))
+	area_id = int(query_data.lstrip("event_area_"))
 	state = MenuState.DESIGNER_EVENTS
-	menu_markup = generate_reply_markup([BACK_KEYBOARD + TO_TOP_KEYBOARD], request_location=True)
+	menu_markup = back_menu
 	callback = select_events_callback
 
-	if event_type_id == 0:
+	if area_id == 0:
 		message = await query.message.reply_text(
-			f'Вот что сейчас проходит в нашем городе:\n',
+			f'Мероприятия в вашем городе\n_В стадии разработки_',
 			reply_markup=menu_markup,
 		)
 
-	elif event_type_id == 1:
+	elif area_id == 1:
 		message = await query.message.reply_text(
-			f'Вот что сейчас проходит в России:\n',
+			f'Мероприятия в России\n_В стадии разработки_',
 			reply_markup=menu_markup,
 		)
 
-	elif event_type_id == 2:
+	elif area_id == 2:
 		message = await query.message.reply_text(
-			f'Вот что сейчас проходит в мире:\n',
+			f'Мероприятия в мире\n_В стадии разработки_',
 			reply_markup=menu_markup,
 		)
 
 	else:
-		return await go_back_section(update, context)
+		return await go_back_section(update, context, "Выберите место где пройдут мероприятия в ближайший год!")
 
 	add_section(
 		context,
 		state=state,
-		messages=[message],
+		messages=[update.message, message],
 		reply_markup=menu_markup,
 		query_message=query_data,
 		callback=callback

@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 
 from bot.bot_settings import ADMIN_CHAT_ID
 from bot.constants.messages import check_file_size_message
-from bot.handlers.common import get_section
+from bot.handlers.common import get_section, post_user_log_data
 from bot.logger import log
 from bot.states.main import MenuState
 from bot.utils import generate_inline_markup, fetch_user_data
@@ -78,6 +78,7 @@ async def upload_files_callback(
 		query = update
 		user = update.effective_user
 
+	user_name = context.user_data["details"]["name"]
 	chat_data = context.chat_data
 	section = get_section(context)
 
@@ -122,10 +123,14 @@ async def upload_files_callback(
 		message = await query.message.reply_text(f'*✅ {message_text}*')
 		chat_data["last_message_id"] = message.message_id
 		chat_data["upload_files"].clear()
-		log.info(f'Media files were uploaded on server for user {user.full_name} (ID:{user.id})')
+		message = f'Media files were uploaded on server for {user_name} (ID:{user.id})'
+		log.info(message)
+		await post_user_log_data(context, status_code=2, message=message)
 
 	else:
-		log.info(f'Failed to upload files on server for user {user.full_name} (ID:{user.id})')
+		message = f'Failed to upload files on server for {user_name} (ID:{user.id})'
+		log.error(message)
+		await post_user_log_data(context, status_code=0, message=message)
 
 		# если пользователь в разделе техподдержка, то не будем выводить инлайн кнопку
 		if not section["state"] == MenuState.SUPPORT:

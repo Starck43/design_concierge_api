@@ -17,9 +17,9 @@ from bot.constants.messages import (
 )
 from bot.constants.patterns import DONE_PATTERN, CONTINUE_PATTERN
 from bot.handlers.common import (
-	send_error_to_admin, delete_messages_by_key, catch_server_error, create_registration_link,
+	send_error_to_admin, delete_messages_by_key, catch_critical_error, create_registration_link,
 	edit_or_reply_message, load_categories, set_priority_group, invite_user_to_chat, generate_categories_list,
-	select_region
+	select_region, post_user_log_data
 )
 from bot.logger import log
 from bot.sms import SMSTransport
@@ -87,13 +87,15 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 	await delete_messages_by_key(context, "last_message_ids")
 	await delete_messages_by_key(context, "warn_message_ids")
 
-	error = chat_data.get("error")
-	if error:
-		await send_error_to_admin(update.message, context, error={}, text=error)
+	last_error = chat_data.get("last_error")
+	if last_error:
 		await create_registration_link(update.message, context)
+		await post_user_log_data(context, status_code=0, message=last_error["text"], error_code=last_error["code"])
 
 	if current_status == 'cancel_registration' or match_query(DONE_PATTERN, message_text):
-		log.info(f'User {user.full_name} (ID:{user.id}) interrupted registration.')
+		message = f'User {user.full_name} (ID:{user.id}) interrupted registration'
+		log.info(message)
+		await post_user_log_data(context, status_code=5, message=message)
 
 		await interrupt_reg_message(update.message)
 
@@ -115,12 +117,16 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 		user_details.pop("work_experience", None)
 
 		res = await fetch_user_data(endpoint='/create/', data=user_details, headers=headers, method='POST')
-		if res.get('status_code', None) == 201:
-			log.info(f'User {user.full_name} (ID:{user.id}) has been registered.')
+		if res["status_code"] == 201:
 			chat_data["status"] = "registered"
+			message = f'User {user.full_name} (ID:{user.id}) has been registered'
+			log.info(message)
+			await post_user_log_data(context, status_code=2, message=message)
 
 			if user_data["priority_group"] == Group.DESIGNER and not user_details.get("socials_url"):
-				log.info(f"Access restricted for user {user.full_name} (ID:{user.id}).")
+				message = f'Access restricted for {user_details["name"]} (ID:{user.id})'
+				log.warning(message)
+				await post_user_log_data(context, status_code=1, message=message)
 
 				message = await restricted_access_message(update.message, reply_markup=start_menu)
 				last_message_ids["restricted_access"] = message.message_id
@@ -139,7 +145,8 @@ async def end_registration(update: Union[Update, CallbackQuery], context: Contex
 				last_message_ids["invite_to_channel"] = message.message_id
 
 		else:
-			await catch_server_error(update.message, context, error=res)
+			error_text = "Ошибка создания нового пользователя!"
+			await catch_critical_error(update.message, context, error=res, text=error_text)
 
 	else:
 		await update.message.reply_text(

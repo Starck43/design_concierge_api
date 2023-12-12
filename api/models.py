@@ -163,7 +163,8 @@ class User(models.Model):
 		blank=True
 	)
 	total_rating = models.FloatField('Общий рейтинг', default=0)
-	token = models.ForeignKey(Token, verbose_name='Токен', on_delete=models.SET_NULL, null=True, blank=True, related_name='user_token')
+	token = models.ForeignKey(Token, verbose_name='Токен', on_delete=models.SET_NULL, null=True, blank=True,
+	                          related_name='user_token')
 
 	class Meta:
 		verbose_name = 'Пользователь'
@@ -535,3 +536,35 @@ class File(models.Model):
 			if os.path.exists(file_path):
 				os.remove(file_path)
 		super().delete(*args, **kwargs)
+
+
+class Log(models.Model):
+	STATUS_CHOICES = (
+		(0, 'error'),
+		(1, 'warning'),
+		(2, 'successful'),
+		(3, 'start'),
+		(4, 'finish'),
+		(5, 'interruption'),
+	)
+	user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+	message = models.CharField('Сообщение', max_length=255)
+	status = models.PositiveSmallIntegerField('Статус заказа', choices=STATUS_CHOICES, blank=True)
+	error_code = models.CharField('Код ошибки', max_length=3, null=True)
+	created_at = models.DateTimeField('Дата создания', auto_now_add=True)
+
+	def __str__(self):
+		return f'{self.message} - [{self.error_code or "OK"}]'
+
+
+class Event(models.Model):
+    cover = models.URLField(blank=True)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    location = models.CharField(max_length=255)
+    date_start = models.DateField(blank=True)
+    date_end = models.DateField(blank=True)
+    source_link = models.URLField(blank=True)
+
+    def __str__(self):
+        return self.title

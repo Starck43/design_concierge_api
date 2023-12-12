@@ -2,11 +2,13 @@ import re
 from datetime import datetime
 from functools import partial
 from typing import Union
+from warnings import filterwarnings
 
 from telegram import Update
 from telegram.ext import (
 	CommandHandler, MessageHandler, ConversationHandler, filters, CallbackQueryHandler, ContextTypes
 )
+from telegram.warnings import PTBUserWarning
 
 from bot.bot_settings import CHANNEL_ID
 from bot.constants.menus import start_menu, done_menu
@@ -19,7 +21,7 @@ from bot.handlers.common import (
 	init_start_section, user_authorization, load_user_field_names, set_priority_group,
 	invite_user_to_chat, is_user_chat_member, go_back_section, select_user_categories_callback, delete_messages_by_key,
 	message_for_admin_callback, select_user_group_callback, confirm_region_callback, show_chat_group_links,
-	trade_dialog_choice
+	trade_dialog_choice, post_user_log_data
 )
 from bot.handlers.cooperation import cooperation_requests, coop_request_message_callback
 from bot.handlers.done import done
@@ -54,6 +56,8 @@ from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import determine_greeting
 
+filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
+
 
 async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Union[str, int]:
 	"""Начало диалога по команде /start или сообщении start"""
@@ -84,7 +88,10 @@ async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 	is_channel_member = await is_user_chat_member(context.bot, user_id=user.id, chat_id=CHANNEL_ID)
 
 	if user_data["details"].get("access", -2) == -2:
-		log.info(f"Access denied for user {user.full_name} (ID:{user.id}).")
+		message = f'Access denied for {user_data["details"]["name"]} (ID:{user.id})'
+		log.warning(message, extra=user_data["details"])
+		await post_user_log_data(context, status_code=5, message=message)
+
 		message = await denied_access_message(update.message)
 		last_message_ids["denied_access"] = message.message_id
 
@@ -93,14 +100,13 @@ async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 	# если пользователь первый раз начал диалог
 	if chat_data.get("status") != "dialog":
 		chat_data["status"] = "dialog"
-
 		hour = datetime.now().time().hour
 		greeting = determine_greeting(hour)
 
 		await update.message.reply_text(
 			f'{greeting}, {user.first_name}\n'
 			f'Добро пожаловать в Консьерж для Дизайнера!\n',
-			reply_markup=done_menu if not is_channel_member else start_menu
+			reply_markup=done_menu if not is_channel_member else None
 		)
 
 		if user_details.get("access", -1) < 0:
@@ -130,8 +136,9 @@ async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 			last_message_ids["invite_to_channel"] = message.message_id
 
 	else:
-		log.info(f"User {user.full_name} (ID:{user.id}) started conversation.")
-
+		message = f'User {user_details["name"]} (ID:{user.id}) started conversation'
+		log.info(message)
+		await post_user_log_data(context, status_code=3, message=message)
 		# начальное меню разделов бота
 		menu = await init_start_section(context, state=MenuState.START)
 		return menu["state"]
@@ -302,7 +309,7 @@ main_dialog = ConversationHandler(
 			CallbackQueryHandler(recommend_new_user_callback, pattern=r"^recommended_user_\d+$"),
 		],
 		MenuState.DESIGNER_EVENTS: [
-			CallbackQueryHandler(select_events_callback, pattern=r"^event_type_\d+$"),
+			CallbackQueryHandler(select_events_callback, pattern=r"^event_area_\d+$"),
 		],
 		MenuState.PERSONAL_ASSISTANT: [
 			# CallbackQueryHandler(success_joined_to_chat_callback, pattern=r"^joined_to_chat$"),

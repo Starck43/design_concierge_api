@@ -737,7 +737,7 @@ async def load_user(
 	data = res["data"]
 	if data is None:
 		text = "Ошибка чтения данных пользователя."
-		await catch_server_error(message, context, error=res, text=text)
+		await send_error_to_admin(message, context, error=res, text=text)
 
 	return data
 
@@ -745,18 +745,16 @@ async def load_user(
 async def load_regions(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[list], Optional[list]]:
 	res = await fetch_data("/regions")
 	if not res["data"]:
-		text = "Ошибка загрузки регионов через api"
-		await catch_server_error(
+		text = "Ошибка загрузки списка регионов"
+		await send_error_to_admin(
 			message,
 			context,
 			error=res,
 			text=text,
-			reply_markup=done_menu,
-			auto_send_notification=False
 		)
 		return None, None
 
-	return res["data"], filter_list(res["data"], "in_top", 1)
+	return res["data"], None  # filter_list(res["data"], "in_top", 1)
 
 
 async def load_orders(
@@ -908,6 +906,13 @@ async def update_favourites(
 		return None, text
 
 	return res["data"], None
+
+
+async def post_user_log_data(context: ContextTypes.DEFAULT_TYPE, status_code: int, message, error_code: int = None):
+	""" Сохранение записи в лог таблицу """
+	user_id = context.bot.id
+	data = {"user_id": str(user_id), "status": status_code, "message": message, "error_code": error_code}
+	await fetch_data("/logs", data=data, method="POST")
 
 
 async def select_user_categories_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1106,7 +1111,7 @@ async def create_questionnaire_link(message: Message, context: ContextTypes.DEFA
 	return url
 
 
-async def catch_server_error(
+async def catch_critical_error(
 		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
 		error: dict,
@@ -1115,31 +1120,36 @@ async def catch_server_error(
 		auto_send_notification: bool = True,
 ) -> Message:
 	user = message.chat
+	user_name = context.user_data.get("details", {}).get("name") or user.full_name
 	error_data = {
-		"error_text": error.get("error", "Неизвестная ошибка"),
-		"error_code": error.get("status_code", "unknown"),
+		"error": error.get("error", "Неизвестная ошибка"),
+		"status_code": error.get("status_code", "unknown"),
 		"url": error.get("url", ""),
 		"body": error.get("request_body", {})
 	}
 
-	log.info('User {} got server error {} on request {}: "{}"'.format(
-		user.id, error_data["error_code"], error_data["url"], error_data["error_text"]
+	log.error('User {} (ID:{}) got server error {} on request {}: "{}"'.format(
+		user_name, user.id, error_data["status_code"], error_data["url"], error_data["error"]
 	))
 
-	error_title = text or f'{error_data["error_code"]}: {error_data["error_text"]}\n'
+	error_title = text or f'{error_data["status_code"]}: {error_data["error"]}\n'
+	await post_user_log_data(context, status_code=0, message=error_data["error"], error_code=error_data["status_code"])
+
 	if auto_send_notification:
 		await send_error_to_admin(message, context, error=error_data, text=error_title)
-		error_text = "Администратор уже проинформирован о проблеме.\nПопробуйте повторить позже."
-		markup = generate_inline_markup(["Отправить"], callback_data="send_error")
+		error_text = "Сообщение об ошибке отправлено в техподержку.\nПопробуйте повторить позже"
+		markup = reply_markup
 
 	else:
-		error_text = "Можете поделиться ошибкой с администратором Консьерж Сервис."
-		markup = reply_markup
+		context.chat_data["last_error"] = {"text": error.get("error"), "code": error.get("status_code")}
+		error_text = "Опишите более подробно ситуацию при которой возникла ошибка " \
+		             "и/или нажмите *Отправить* уведомление в техподдержку"
+		markup = generate_inline_markup(["Отправить"], callback_data="send_error")
 
 	reply_message = await message.reply_text(
 		f'Что-то пошло нет так!\n'
 		f'*{error_title}*\n\n'
-		f'{error_text}.\n\n'
+		f'{error_text}.\n'
 		f'Приносим свои извинения, {user.first_name}',
 		reply_markup=markup
 	)
@@ -1215,6 +1225,7 @@ async def send_error_to_admin(
 	})
 
 	chat_data = context.chat_data
+	chat_data["last_error"] = {"text": error.get("error"), "code": error.get("status_code")}
 	section = get_section(context)
 	error_data = {
 		"chat_id": chat_data.get("chat_id"),
@@ -1253,9 +1264,9 @@ async def send_error_message_callback(update: Update, context: ContextTypes.DEFA
 	await query.answer()
 
 	chat_data = context.chat_data
-	error_code = str(chat_data["status_code"])
 	error_message = {
-		error_code: chat_data.get("error", "unknown"),
+		"error": chat_data.get("error", "unknown"),
+		"status_code": chat_data.get("status_code", "unknown"),
 		"url": chat_data.get("api_url", "unknown"),
 	}
 

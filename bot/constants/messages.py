@@ -330,7 +330,7 @@ async def select_search_options_message(message: Message, cat_group: int) -> Mes
 async def select_events_message(message: Message, text: str = None) -> Message:
 	buttons = generate_inline_markup(
 		["Местные", "Российские", "Международные"],
-		callback_data_prefix="event_type_",
+		callback_data_prefix="event_area_",
 		vertical=True
 	)
 

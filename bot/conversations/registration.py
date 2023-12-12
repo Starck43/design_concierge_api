@@ -11,8 +11,8 @@ from bot.constants.menus import continue_menu
 from bot.constants.messages import yet_registered_message, select_user_group_message
 from bot.constants.patterns import (CANCEL_PATTERN, REGISTRATION_PATTERN, DONE_PATTERN)
 from bot.handlers.common import (
-	catch_server_error, load_user_field_names, load_regions, select_user_categories_callback,
-	select_user_group_callback, confirm_region_callback
+	catch_critical_error, load_user_field_names, load_regions, select_user_categories_callback,
+	select_user_group_callback, confirm_region_callback, post_user_log_data
 )
 from bot.handlers.registration import (
 	end_registration, name_choice, regions_choice, socials_choice, segment_choice, address_choice, categories_choice,
@@ -50,14 +50,16 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 	if status_code != 404:
 		text = "Ошибка чтения данных пользователя."
-		await catch_server_error(update.message, context, error=res, text=text)
+		await catch_critical_error(update.message, context, error=res, text=text)
 		return RegState.DONE
 
 	user_data["token"] = res.get("token", None)
 	chat_data["chat_id"] = update.effective_chat.id
 	user_data["details"] = {"user_id": user.id}
 	chat_data["status"] = "registration"
-	log.info(f'User {user.full_name} (ID:{user.id}) started registration.')
+	message = f'User {user.full_name} (ID:{user.id}) started registration'
+	log.info(message)
+	await post_user_log_data(context, status_code=3, message=message)
 
 	################################ TESTING #################################
 	# chat_data["reg_state"] = RegState.SELECT_REGIONS

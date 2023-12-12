@@ -10,7 +10,7 @@ from bot.constants.messages import success_save_rating_message, restricted_acces
 from bot.constants.static import MAX_RATE, RATE_BUTTONS
 from bot.entities import TGMessage
 from bot.handlers.common import (
-	edit_or_reply_message, send_error_to_admin, catch_server_error, delete_messages_by_key, get_section, load_user
+	edit_or_reply_message, send_error_to_admin, catch_critical_error, delete_messages_by_key, get_section, load_user
 )
 from bot.utils import (
 	fetch_user_data, fetch_data, find_obj_in_dict, update_inline_markup, generate_inline_markup,
@@ -69,7 +69,7 @@ async def update_ratings(message: Message, context: ContextTypes.DEFAULT_TYPE, r
 	elif res["error"]:
 		res.setdefault("request_body", rating_data)
 		text = "Ошибка сохранения результатов анкетирования"
-		await catch_server_error(message, context, error=res, text=text)
+		await send_error_to_admin(message, context, error=res, text=text)
 
 	return res["data"]
 

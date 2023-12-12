@@ -173,8 +173,8 @@ async def recommend_user_choice(update: Update, context: ContextTypes.DEFAULT_TY
 			local_data["user_data"].pop("main_region", None)
 
 		res = await fetch_user_data(endpoint='/create/', data=local_data["user_data"], method='POST')
-		if res.get('status_code', None) == 201:
-			text = "Пользователь отправлен на проверку.\nСпасибо за Вашу рекомендацию!"
+		if res["status_code"] == 201:
+			text = "После успешной проверки пользователь появится в списках.\nСпасибо за Вашу рекомендацию!"
 			category_list = extract_fields(list(selected_categories.values()), field_names="name")
 			categories = format_output_text("в категориях", category_list)
 			await send_message_to(

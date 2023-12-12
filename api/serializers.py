@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework.relations import PrimaryKeyRelatedField
 
 from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rating, Feedback, Order, \
-	Support
+	Support, Log
 from .models import Region, Country
 
 
@@ -263,3 +263,9 @@ class FileUploadSerializer(serializers.Serializer):
 			if not url.startswith('https://api.telegram.org'):
 				raise serializers.ValidationError('URL must start with https://api.telegram.org')
 		return value
+
+
+class LogSerializer(serializers.ModelSerializer):
+	class Meta:
+		model = Log
+		fields = '__all__'
