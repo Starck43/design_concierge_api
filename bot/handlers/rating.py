@@ -207,7 +207,7 @@ async def show_total_detail_rating(context: ContextTypes.DEFAULT_TYPE, user: dic
 			buttons = [buttons, RATING_KEYBOARD[int(is_voted)]],
 			callback_data = [callback_data, "update_rating"]
 
-	inline_markup = generate_inline_markup(buttons, callback_data=callback_data, vertical=True)
+	inline_markup = generate_inline_markup(buttons, callback_data=callback_data, cols=1)
 	temp_messages["related_user_rating"] = await edit_or_reply_message(
 		context,
 		text=rating_text,

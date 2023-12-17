@@ -175,7 +175,8 @@ def generate_inline_markup(
 		callback_data: Optional[Union[str, List[str], List[List[str]]]] = None,
 		callback_data_prefix: Optional[str] = "",
 		second_button_label: Optional[str] = "",
-		vertical: bool = False,
+		callback_as_url: bool = False,
+		cols: int = None,
 		**kwargs,
 ) -> Optional[InlineKeyboardMarkup]:
 	"""
@@ -190,7 +191,8 @@ def generate_inline_markup(
 		item_prefix: A string or list of strings to be added as a prefix to the button label.
 		callback_data_prefix: The string to be added as a prefix to the callback data string.
 		second_button_label: The text to be displayed in the second column.
-		vertical: Whether the buttons should be displayed vertically or horizontally.
+		callback_as_url: The flag indicating whether the callback should be a list of url data
+		cols: Whether the buttons should be displayed per cols count in a row.
 		**kwargs: Additional keyword arguments to be passed to the InlineKeyboardButton constructor.
 
 	Returns:
@@ -211,6 +213,7 @@ def generate_inline_markup(
 			callback_data = callback_data * len(flatten_data if isinstance(data[0], list) else data)
 	elif isinstance(callback_data, list) and callback_data:
 		callback_data = flatten_list(callback_data)
+		data = [data]*len(callback_data) if isinstance(data, str) else [data]
 	else:
 		callback_data = [str(i) for i in range(len(flatten_list(data)))]
 
@@ -222,7 +225,10 @@ def generate_inline_markup(
 		if isinstance(row, str):
 			text = item_prefix + row
 			callback_data_str += str(callback_data.pop(0)) if callback_data else slugify(row, separator="_")
-			row = [InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs)]
+			if callback_as_url:
+				row = [InlineKeyboardButton(text, url=callback_data_str, **kwargs)]
+			else:
+				row = [InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs)]
 
 		elif isinstance(row, dict):
 			key = row.get(callback_data[i], slugify(row.get(item_key, callback_data[i]), separator="_"))
@@ -238,7 +244,10 @@ def generate_inline_markup(
 					text = f"{text} {prefix}"
 
 			callback_data_str += str(key)
-			row = [InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs)]
+			if callback_as_url:
+				row = [InlineKeyboardButton(text, url=callback_data_str, **kwargs)]
+			else:
+				row = [InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs)]
 
 		elif isinstance(row, list):
 			prefix = "".join(item_prefix) if isinstance(item_prefix, list) else item_prefix
@@ -254,7 +263,10 @@ def generate_inline_markup(
 				callback_data_str = callback_data_prefix
 				callback_data_str += str(callback_data.pop(0)) if callback_data else slugify(item, separator="_")
 				text = left_part + item + right_part
-				_row.append(InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs))
+				if callback_as_url:
+					_row.append(InlineKeyboardButton(text, url=callback_data_str, **kwargs))
+				else:
+					_row.append(InlineKeyboardButton(text, callback_data=callback_data_str, **kwargs))
 			row = _row
 
 		else:
@@ -270,8 +282,10 @@ def generate_inline_markup(
 			)
 		buttons.append(row)
 
-	if vertical:
-		buttons = [[btn] for row in buttons for btn in row]
+	if cols:
+		buttons = flatten_list(buttons)
+		buttons = [buttons[i:i + cols] for i in range(0, len(buttons), cols)]
+
 	else:
 		buttons = [row for row in buttons]
 
@@ -874,7 +888,7 @@ def match_query(substring: any, text: str) -> bool:
 
 
 def flatten_list(
-		lst: List[Union[str, List[str]]],
+		lst: List[Union[str, list]],
 		exclude: Optional[Union[str, List[str]]] = None,
 		delimiter: str = ""
 ) -> Union[List[str], str]:
@@ -904,8 +918,10 @@ def flatten_list(
 
 		if isinstance(item, list):
 			stack.extend(item[::-1])
-		elif item not in exclude:
+		elif isinstance(item, str) and item not in exclude:
 			flattened.append(remove_special_chars(item))
+		else:
+			flattened.append(item)
 
 	if delimiter:
 		return delimiter.join(flattened)
@@ -945,6 +961,44 @@ def filter_list(
 	else:
 		sorted_list = sorted(set(list_), key=lambda x: x if isinstance(x, str) else str(x), reverse=reverse)
 		return sorted_list
+
+
+def group_objects_by_date(objects: List[dict], date_field_name: str, date_format: str) -> Dict[str, List[dict]]:
+	"""
+	Groups objects by month.
+
+	Args:
+		objects: A list of objects with date field.
+		date_field_name: A field name with date
+		date_format: Date format for the objects' keys.
+
+	Returns:
+		A dictionary where the keys are the month names and the values are lists
+		of objects belonging to that month.
+	"""
+	grouped_objects = {}
+	for obj in objects:
+		start_date = datetime.strptime(obj[date_field_name], "%d.%m.%Y")
+		key = start_date.strftime(date_format)
+		if key not in grouped_objects:
+			grouped_objects[key] = []
+		grouped_objects[key].append(obj)
+	return grouped_objects
+
+
+def convert_date(date_str: str, input_format: str, output_format: str) -> str:
+	"""
+	Convert a date string to the specified output format.
+	Args:
+		date_str (str): The date string to translate in the format "YYYY-MM-DD".
+		input_format (str): The input format for date string.
+		output_format (str): The output format for date string.
+
+	Returns:
+		str: The formatted date string.
+	"""
+	date = datetime.strptime(date_str, input_format)
+	return date.strftime(output_format)
 
 
 def fuzzy_compare(

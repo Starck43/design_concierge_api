@@ -3,7 +3,7 @@ from django.urls import path
 from .views import (
 	RatingQuestionsView, CategoryList, CategoryDetail, UserList, UserDetail, UpdateRatingView, RegionList, RegionDetail,
 	UserFieldNamesView, FileUploadView, OrderListView, OrderDetail, RatingListView, FavouriteListView,
-	UpdateFavouriteView, SupportListView, SupportDetail, UserSearchView, MessageListCreateView, LogView
+	UpdateFavouriteView, SupportListView, SupportDetail, UserSearchView, MessageListCreateView, LogView, EventListView
 )
 
 urlpatterns = [
@@ -39,7 +39,8 @@ urlpatterns = [
 	path('user_field_names/', UserFieldNamesView.as_view(), name='user-field-names'),
 
 	path('logs/', LogView.as_view(), name='log'),
-
+	path('events/', EventListView.as_view(), name='event-list'),
+	path('events/<str:month>/', EventListView.as_view(), name='events-per-month'),
 ]
 
 # примеры запросов:

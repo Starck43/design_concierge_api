@@ -1,0 +1,47 @@
+# list of resources
+- url: https://www.expoclub.ru
+  params:
+    - group: 0
+      query_pathname: "/search"
+      search_query: ""
+      country:
+        name: country_id
+        value: 4045
+        is_query_param: true
+      city:
+        name: region_id
+        value:
+        is_query_param: true
+      sector:
+        name: profile
+        value: 12844
+        is_query_param: true
+      date_from:
+        name: date_from
+        value: "%d.%m.%Y"
+        is_query_param: true
+      date_to:
+        name: date_to
+        value: "%d.%m.%Y"
+        is_query_param: true
+
+  output:
+    root: ".content"
+    children: ".b-sear"
+    fields:
+    - field: cover
+      selector: "a img"
+      attribute: "src"
+    - field: title
+      selector: ".title a"
+    - field: description
+      selector: "p:last-child"
+    - field: start_date
+      selector: ".sear-bottom .red_add"
+    - field: end_date
+      selector: ""
+    - field: location
+      selector: ".from a:last-child"
+    - field: source_link
+      selector: "a.podr"
+      attribute: "href"

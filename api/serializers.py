@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework.relations import PrimaryKeyRelatedField
 
 from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rating, Feedback, Order, \
-	Support, Log
+	Support, Log, Event
 from .models import Region, Country
 
 
@@ -268,4 +268,10 @@ class FileUploadSerializer(serializers.Serializer):
 class LogSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = Log
+		fields = '__all__'
+
+
+class EventSerializer(serializers.ModelSerializer):
+	class Meta:
+		model = Event
 		fields = '__all__'

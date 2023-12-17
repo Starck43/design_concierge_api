@@ -1,3 +1,4 @@
+import locale
 import re
 from datetime import datetime
 from functools import partial
@@ -27,8 +28,8 @@ from bot.handlers.cooperation import cooperation_requests, coop_request_message_
 from bot.handlers.done import done
 from bot.handlers.main import (
 	main_menu_choice, show_user_details_callback, user_details_choice,
-	select_events_callback, change_supplier_segment_callback,
-	users_search_choice, services_choice, select_users_list_callback
+	select_events_type_callback, change_supplier_segment_callback,
+	users_search_choice, services_choice, select_users_list_callback, select_events_month_callback
 )
 from bot.handlers.order import (
 	add_order_fields_choice, modify_order_fields_choice, show_order_details_callback, select_order_executor_callback,
@@ -61,6 +62,7 @@ filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBU
 
 async def start_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Union[str, int]:
 	"""Начало диалога по команде /start или сообщении start"""
+	# locale.setlocale(locale.LC_ALL, locale.getdefaultlocale())
 
 	await delete_messages_by_key(context, "last_message_id")
 	await delete_messages_by_key(context, "last_message_ids")
@@ -309,7 +311,8 @@ main_dialog = ConversationHandler(
 			CallbackQueryHandler(recommend_new_user_callback, pattern=r"^recommended_user_\d+$"),
 		],
 		MenuState.DESIGNER_EVENTS: [
-			CallbackQueryHandler(select_events_callback, pattern=r"^event_area_\d+$"),
+			CallbackQueryHandler(select_events_type_callback, pattern=r"^events_type_\d+$"),
+			CallbackQueryHandler(select_events_month_callback, pattern=r"^events_type_\d+__.+$"),
 		],
 		MenuState.PERSONAL_ASSISTANT: [
 			# CallbackQueryHandler(success_joined_to_chat_callback, pattern=r"^joined_to_chat$"),

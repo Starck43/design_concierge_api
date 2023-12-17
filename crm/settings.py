@@ -16,9 +16,7 @@ ALLOWED_HOSTS = ['*']  # env('ALLOWED_HOSTS', list, ['*'])
 
 INTERNAL_IPS = ALLOWED_HOSTS
 
-
 # Application definition
-
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -86,6 +84,8 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 REST_FRAMEWORK = {
+    'DATE_FORMAT': '%d.%m.%Y',
+    'DATE_INPUT_FORMATS': ['%d.%m.%Y'],
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
     ],

@@ -95,7 +95,7 @@ async def profile_sections_choice(update: Update, context: ContextTypes.DEFAULT_
 	# Подраздел - ТАРИФЫ
 	elif match_query(TARIFF_PATTERN, query_message):
 		state = MenuState.TARIFF_CHANGE
-		inline_markup = generate_inline_markup(TARIFF_KEYBOARD, callback_data_prefix="tariff_", vertical=True)
+		inline_markup = generate_inline_markup(TARIFF_KEYBOARD, callback_data_prefix="tariff_", cols=1)
 
 		reply_message = await edit_or_reply_message(
 			context,
@@ -426,7 +426,7 @@ async def modify_profile_callback(update: Update, context: ContextTypes.DEFAULT_
 		list(profile_fields.values()),
 		callback_data=list(profile_fields.keys()),
 		callback_data_prefix="modify_field_",
-		vertical=True
+		cols=1
 	)
 
 	# проверим последнее сохраненное сообщение в текущем разделе.

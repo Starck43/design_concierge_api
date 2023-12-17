@@ -53,7 +53,7 @@ async def submit_reg_data_message(message: Message) -> Message:
 	inline_markup = generate_inline_markup(
 		[SUBMIT_REG_KEYBOARD + CANCEL_KEYBOARD],
 		callback_data=["approve", "cancel"],
-		vertical=True
+		cols=1
 	)
 
 	return await message.reply_text(
@@ -131,7 +131,7 @@ async def select_user_group_message(
 	if groups_only:
 		keyboard[:] = [keyboard[i] for i in range(len(keyboard)) if i in groups_only]
 
-	inline_markup = generate_inline_markup(keyboard, callback_data=groups_only, vertical=True)
+	inline_markup = generate_inline_markup(keyboard, callback_data=groups_only, cols=1)
 	inline_markup = update_inline_markup(
 		inline_keyboard=inline_markup.inline_keyboard,
 		active_value="",
@@ -177,7 +177,7 @@ async def incorrect_socials_warn_message(message: Message) -> None:
 
 
 async def offer_to_select_segment_message(message: Message, title: str = None) -> Message:
-	inline_markup = generate_inline_markup(SEGMENT_KEYBOARD, callback_data_prefix="segment_", vertical=True)
+	inline_markup = generate_inline_markup(SEGMENT_KEYBOARD, callback_data_prefix="segment_", cols=1)
 	inline_markup = update_inline_markup(
 		inline_keyboard=inline_markup.inline_keyboard,
 		active_value="",
@@ -320,7 +320,7 @@ async def select_search_options_message(message: Message, cat_group: int) -> Mes
 	if cat_group != 2:
 		keyboard = SEARCH_OPTIONS_KEYBOARD.copy()[:-1]
 
-	inline_markup = generate_inline_markup(keyboard, vertical=True)
+	inline_markup = generate_inline_markup(keyboard, cols=1)
 	return await message.reply_text(
 		"🖍 Введите поисковые слова и/или выберите опции из списка:",
 		reply_markup=inline_markup
@@ -330,8 +330,8 @@ async def select_search_options_message(message: Message, cat_group: int) -> Mes
 async def select_events_message(message: Message, text: str = None) -> Message:
 	buttons = generate_inline_markup(
 		["Местные", "Российские", "Международные"],
-		callback_data_prefix="event_area_",
-		vertical=True
+		callback_data_prefix="events_type_",
+		cols=1
 	)
 
 	return await message.reply_text(

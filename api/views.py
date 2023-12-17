@@ -1,13 +1,13 @@
 import itertools
 from collections import OrderedDict
-from datetime import date
+from datetime import date, datetime, timedelta
 from functools import cached_property
 
 import requests
 from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F, Count, Field
+from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F, Count, Field, Max
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -18,10 +18,15 @@ from rest_framework.generics import (
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rating, Region, File, Order, Favourite, Group, Support, Message, Log
+from api.models import Category, User, Rating, Region, File, Order, Favourite, Group, Support, Message, Log, UserGroup, \
+	Event
+from bot.utils import convert_date
+from .logic import get_date_range
+from .parser import load_events
 from .serializers import (
 	CategorySerializer, UserListSerializer, RatingSerializer, RegionSerializer, UserDetailSerializer,
-	FileUploadSerializer, OrderSerializer, FavouriteSerializer, SupportSerializer, MessageSerializer, LogSerializer
+	FileUploadSerializer, OrderSerializer, FavouriteSerializer, SupportSerializer, MessageSerializer, LogSerializer,
+	EventSerializer
 )
 
 
@@ -584,3 +589,34 @@ class LogView(APIView):
 
 		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
+class EventListView(APIView):
+	def get(self, request, **kwargs):
+		group = request.query_params.get('group', None)
+		month = request.query_params.get('month')
+		year = request.query_params.get('year')
+		events_type = int(request.query_params.get('events_type'))
+		now = datetime.now()
+		group_list = [int(group)] if group is not None else [0, 1]
+
+		query = Q(type=events_type, group__code__in=group_list, excluded=False)
+		events = Event.objects.filter(query)
+		# Получаем дату последнего обновления событий
+		last_update = events.aggregate(Max('modified_at'))['modified_at__max']
+		# получаем диапазон поиска событий в таблице в зависимости от переданных параметров запроса
+		start_date, end_date = get_date_range(datetime.strptime(month + "." + year, "%m.%Y") if month else None)
+
+		# Если в дате последнего обновления сменился месяц, то выполним загрузку событий и удалим прошедшие события
+		if not events or events and last_update and last_update.month != now.month:
+			# Удаляем прошедшие события из базы данных
+			events.filter(end_date__month__lt=now.month).delete()
+
+			# Парсим и загружаем новые события в своей категории для группы в БД
+			load_events(events_type, int(group), start_date, end_date)
+
+		query &= Q(start_date__gte=start_date, start_date__lte=end_date)
+		# Получаем события для группы
+		events = Event.objects.filter(query)
+
+		serializer = EventSerializer(events, many=True)
+		return Response(serializer.data)

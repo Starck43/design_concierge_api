@@ -1,6 +1,6 @@
 from typing import Optional, Literal
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputFile
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
@@ -19,11 +19,12 @@ from bot.constants.patterns import (
 	ADD_FAVOURITE_PATTERN, REMOVE_FAVOURITE_PATTERN, DESIGNER_ORDERS_PATTERN, PLACED_DESIGNER_ORDERS_PATTERN,
 	OUTSOURCER_ACTIVE_ORDERS_PATTERN, DONE_ORDERS_PATTERN, USER_FEEDBACK_PATTERN, NEW_DESIGNER_ORDER_PATTERN
 )
-from bot.constants.static import CAT_GROUP_DATA
+from bot.constants.static import CAT_GROUP_DATA, MONTH_NAME_LIST
 from bot.entities import TGMessage
 from bot.handlers.common import (
 	load_cat_users, load_user, load_orders, generate_users_list, generate_categories_list, update_favourites,
-	edit_or_reply_message, prepare_current_section, add_section, get_section, go_back_section, delete_messages_by_key
+	edit_or_reply_message, prepare_current_section, add_section, get_section, go_back_section, delete_messages_by_key,
+	load_events
 )
 from bot.handlers.details import show_user_card_message
 from bot.handlers.order import new_order_callback, show_user_orders
@@ -31,7 +32,7 @@ from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (
 	generate_reply_markup, match_query, fetch_user_data, send_action, update_text_by_keyword, get_key_values,
-	find_obj_in_dict
+	find_obj_in_dict, generate_inline_markup, convert_date, format_output_text
 )
 
 
@@ -512,50 +513,123 @@ async def change_supplier_segment_callback(update: Update, context: ContextTypes
 	)
 
 
-async def select_events_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	""" Колбэк выбора мероприятий в своей области: мир/страна/город """
+async def select_events_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	""" Колбэк выбора группы мероприятий в своей области: город/страна/мир """
 
 	query = update.callback_query
 	await query.answer()
 
 	section = await prepare_current_section(context)
 	query_data = section.get("query_message") or query.data
-	area_id = int(query_data.lstrip("event_area_"))
+	events_type = int(query_data.lstrip("events_type_"))
+	priority_group = min(context.user_data["details"]["groups"])
+
+	events = await load_events(query.message, context, events_type=events_type, group=priority_group)
 	state = MenuState.DESIGNER_EVENTS
 	menu_markup = back_menu
-	callback = select_events_callback
+	inline_message = None
 
-	if area_id == 0:
-		message = await query.message.reply_text(
-			f'Мероприятия в вашем городе\n_В стадии разработки_',
-			reply_markup=menu_markup,
-		)
+	if events_type == 0:
+		title = f'Мероприятия в вашем городе\n_В стадии разработки_',
 
-	elif area_id == 1:
-		message = await query.message.reply_text(
-			f'Мероприятия в России\n_В стадии разработки_',
-			reply_markup=menu_markup,
-		)
+	elif events_type == 1:
+		title = f'Мероприятия в России'
 
-	elif area_id == 2:
-		message = await query.message.reply_text(
-			f'Мероприятия в мире\n_В стадии разработки_',
-			reply_markup=menu_markup,
-		)
+	elif events_type == 2:
+		title = f'События в мире в ближайшие 12 месяцев'
 
 	else:
 		return await go_back_section(update, context, "Выберите место где пройдут мероприятия в ближайший год!")
 
+	if not events:
+		title = "Ближайшие мероприятия не найдены!"
+		inline_markup = None
+
+	else:
+		# получаем список уникальных месяцев из ключей объекта с событиями
+		callback_data = list(events.keys())
+		months_list = [
+			f'{MONTH_NAME_LIST[int(month) - 1][:3].upper()} {year}' for month, year in
+			(data.split(".") for data in callback_data)
+		]
+		# создадим инлайн кнопки для выбора месяца по 4 в ряд
+		inline_markup = generate_inline_markup(
+			months_list,
+			callback_data=callback_data,
+			callback_data_prefix=f'events_type_{events_type}__',
+			cols=4
+		)
+
+	message = await query.message.reply_text(title, reply_markup=menu_markup)
+	if inline_markup:
+		inline_message = await query.message.reply_text('В каком месяце ищите мероприятия?', reply_markup=inline_markup)
+
 	add_section(
 		context,
 		state=state,
-		messages=[update.message, message],
+		messages=[update.message, message, inline_message],
 		reply_markup=menu_markup,
-		query_message=query_data,
-		callback=callback
+		query_message=query_data
 	)
 
 	return state
 
 
+async def select_events_month_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	""" Колбэк выбора месяца с мероприятиями в своей области """
 
+	query = update.callback_query
+	await query.answer()
+
+	section = await prepare_current_section(context)
+	query_data = section.get("query_message") or query.data
+	events_type, events_date = query_data.split("__")
+	events_type = int(events_type.lstrip("events_type_"))
+	month, year = events_date.split(".")
+	events = await load_events(query.message, context, events_type=events_type, events_date=events_date)
+	state = MenuState.DESIGNER_EVENTS
+
+	if events:
+		text = f'Список мероприятий на {MONTH_NAME_LIST[int(month) - 1]} {year}:'
+		message = await query.message.reply_text(text, reply_markup=back_menu)
+		messages = [message.message_id]
+
+		for event in events:
+			event_date = event.get("start_date")
+			if event.get("end_date"):
+				event_date += " - " + event["end_date"]
+
+			caption = f'*{event.get("title")}*\n' \
+			          f'`{event.get("description")}`\n' \
+			          f'{format_output_text("📍", event.get("location"), default_sep=" ", tag="_")}\n' \
+			          f'{format_output_text("📅", event_date, default_sep=" ", tag="_")}'
+
+			event_markup = InlineKeyboardMarkup(
+				[[InlineKeyboardButton("Перейти на сайт", url=event.get("source_link"))]]
+			)
+			try:
+				message = await context.bot.send_photo(
+					chat_id=query.message.chat_id,
+					photo=event.get("cover"),
+					caption=caption,
+					reply_markup=event_markup
+				)
+			except error.BadRequest:
+				message = await query.message.reply_text(
+					caption,
+					reply_markup=event_markup
+				)
+			messages.append(message)
+
+	else:
+		message = await query.message.reply_text("Список мероприятий отсутствует", reply_markup=back_menu)
+		messages = [message.message_id]
+
+	add_section(
+		context,
+		state=state,
+		messages=messages,
+		save_full_messages=False
+	)
+
+	return state

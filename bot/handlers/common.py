@@ -22,8 +22,8 @@ from bot.logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (
-	fetch_data, filter_list, generate_inline_markup, fetch_user_data, find_obj_in_dict, extract_fields,
-	match_query, dict_to_formatted_text, update_inline_markup, list_to_dict, fuzzy_compare, format_output_link
+	fetch_data, generate_inline_markup, fetch_user_data, find_obj_in_dict, extract_fields, list_to_dict,
+	match_query, dict_to_formatted_text, update_inline_markup, fuzzy_compare, format_output_link, group_objects_by_date
 )
 
 
@@ -509,7 +509,7 @@ async def generate_categories_list(
 		item_key="name",
 		callback_data="id",
 		callback_data_prefix=callback_data_prefix,
-		vertical=True
+		cols=1
 	)
 
 	if button_type:  # обновим кнопки для предустановки иконок для отметки
@@ -908,6 +908,50 @@ async def update_favourites(
 	return res["data"], None
 
 
+async def load_events(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		events_type: int,
+		events_date: str = None,
+		group: int = None,
+) -> Union[Dict[str, List[dict]], List[dict]]:
+	""" Загрузка событий за год или выбранный месяц для группы: 0 или 1 """
+
+	# TODO: доделать проверку прошедших месяцев и удалять их из events. После чего надо обновить данные по api
+	if events_type == 2:
+		events = context.bot_data.setdefault("world_events", {})
+	elif events_type == 1:
+		events = context.bot_data.setdefault("country_events", {})
+	else:
+		events = context.chat_data.setdefault("region_events", {})
+
+	# попытка найти событие по месяцу в загруженном ранее списке событий
+	data = events.get(events_date)
+	if data:
+		return data
+
+	params = {"events_type": events_type}
+	if group is not None:
+		params["group"] = group
+
+	if events_date:
+		params["month"], params["year"] = events_date.split(".")
+
+	res = await fetch_data(f'/events', params=params)
+	if res["error"]:
+		text = f'Ошибка получения событий за {"месяц" if events_date else "12 мес"} для группы {group}'
+		await send_error_to_admin(message, context, error=res, text=text)
+
+	if res["data"]:
+		grouped_events = group_objects_by_date(res["data"], date_field_name="start_date", date_format='%m.%Y')
+		events.update(grouped_events)
+
+	if events_date:
+		return events.get(events_date, [])
+
+	return events
+
+
 async def post_user_log_data(context: ContextTypes.DEFAULT_TYPE, status_code: int, message, error_code: int = None):
 	""" Сохранение записи в лог таблицу """
 	user_id = context.bot.id
@@ -962,7 +1006,7 @@ async def select_supplier_segment(context: ContextTypes.DEFAULT_TYPE, user: dict
 	inline_markup = generate_inline_markup(
 		SEGMENT_KEYBOARD,
 		callback_data_prefix=f'user_{user["id"]}__segment_',
-		vertical=True
+		cols=1
 	)
 
 	_message = await edit_or_reply_message(

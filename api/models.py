@@ -558,13 +558,23 @@ class Log(models.Model):
 
 
 class Event(models.Model):
-    cover = models.URLField(blank=True)
-    title = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
-    location = models.CharField(max_length=255)
-    date_start = models.DateField(blank=True)
-    date_end = models.DateField(blank=True)
-    source_link = models.URLField(blank=True)
+	TYPE_CHOICES = ((0, 'местные события'), (1, 'события в стране'),(2, 'международные события'),)
+	type = models.PositiveSmallIntegerField('Категория события', choices=TYPE_CHOICES)
+	group = models.ManyToManyField(UserGroup, related_name='events_for_groups', verbose_name='Группа', blank=True)
+	title = models.CharField('Название события', max_length=255)
+	description = models.TextField('Описание события', blank=True)
+	location = models.CharField('Место проведения', max_length=255, blank=True)
+	start_date = models.DateField('Дата начала', blank=True)
+	end_date = models.DateField('Дата окончания', blank=True)
+	source_link = models.URLField('Ссылка на источник', blank=True)
+	cover = models.URLField('Обложка события', blank=True)
+	excluded = models.BooleanField('Исключить для показа', default=False)
+	modified_at = models.DateField('Дата последнего обновления', auto_now=True)
 
-    def __str__(self):
-        return self.title
+	class Meta:
+		verbose_name = 'Событие'
+		verbose_name_plural = 'События'
+		ordering = ('start_date',)
+
+	def __str__(self):
+		return self.title

@@ -15,8 +15,11 @@ from .models import (
 	Feedback,
 	Order,
 	Support,
-	File,
+	File, Log, Event,
 )
+
+admin.site.site_title = 'Консьерж Сервис'
+admin.site.site_header = 'Консьерж Сервис'
 
 
 class CategoryInline(admin.TabularInline):
@@ -204,6 +207,16 @@ class OrderAdmin(admin.ModelAdmin):
 		return "✳️ " + obj.executor.name if obj.executor and obj.executor not in obj.responded_users.all() else ""
 
 
+@admin.register(Event)
+class EventAdmin(admin.ModelAdmin):
+	list_display = ['type', 'title', 'start_date', 'end_date']
+	list_display_links = ['title']
+	ordering = ['start_date']
+	list_filter = ['type', 'group']
+	date_hierarchy = 'start_date'
+	list_per_page = 20
+
+
 admin.site.register(Category, CategoryAdmin)
 # admin.site.register(Outsourcer)
 # admin.site.register(Supplier)
@@ -211,3 +224,4 @@ admin.site.register(Favourite)
 admin.site.register(Support)
 admin.site.register(Feedback)
 admin.site.register(File)
+admin.site.register(Log)
