@@ -5,7 +5,7 @@ import re
 import yaml
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, date
 
 from api.models import Event, UserGroup
 
@@ -83,7 +83,7 @@ def build_url(base_url: str, params: dict):
 	return re.sub(r'(?<!:)//+', '/', url)
 
 
-def load_events(events_type: int, group: int, date_from: str = None, date_to: str = None) -> Optional[dict]:
+def load_events(events_type: int, group: int, date_from: date = None, date_to: date = None) -> Optional[dict]:
 	config = load_config(f'schema-{events_type}.yml')
 	if not config:
 		return

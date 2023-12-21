@@ -29,7 +29,7 @@ from bot.handlers.done import done
 from bot.handlers.main import (
 	main_menu_choice, show_user_details_callback, user_details_choice,
 	select_events_type_callback, change_supplier_segment_callback,
-	users_search_choice, services_choice, select_users_list_callback, select_events_month_callback
+	users_search_choice, services_choice, show_users_list_callback, select_events_month_callback
 )
 from bot.handlers.order import (
 	add_order_fields_choice, modify_order_fields_choice, show_order_details_callback, select_order_executor_callback,
@@ -231,13 +231,13 @@ main_dialog = ConversationHandler(
 		],
 		MenuState.SUPPLIERS_REGISTER: [
 			users_search_handler,
-			CallbackQueryHandler(select_users_list_callback, pattern=r"^group_\d+__category_\d+$"),
+			CallbackQueryHandler(show_users_list_callback, pattern=r"^group_\d+__category_\d+.*$"),
 			CallbackQueryHandler(recommend_new_user_callback, pattern=r"^recommended_user_\d+$"),
 		],
 		MenuState.SERVICES: [
-			services_handler,  # 1
-			users_search_handler,  # 2
-			CallbackQueryHandler(select_users_list_callback, pattern=r"^group_\d+__category_\d+$"),
+			services_handler,  # first callback
+			users_search_handler,  # second callback
+			CallbackQueryHandler(show_users_list_callback, pattern=r"^group_\d+__category_\d+.*$"),
 			CallbackQueryHandler(recommend_new_user_callback, pattern=r"^recommended_user_\d+$"),
 			CallbackQueryHandler(new_order_callback, pattern=r"^place_order$"),
 		],

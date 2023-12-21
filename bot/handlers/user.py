@@ -19,6 +19,7 @@ from bot.utils import match_query, fetch_user_data, format_output_text, extract_
 async def recommend_user_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	""" Функция обработки сообщений при добавлении данных рекомендованного пользователя """
 
+	# TODO: исправить нюанс при возврате назад на первом вопросе
 	chat_data = context.chat_data
 	section = get_section(context)
 	query_message = update.message.text

@@ -1,6 +1,6 @@
 from typing import Optional, Literal
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error, InputFile
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
@@ -13,7 +13,7 @@ from bot.constants.keyboards import (
 from bot.constants.menus import back_menu
 from bot.constants.messages import (
 	recommend_new_user_message, select_events_message, place_new_order_message, select_search_options_message,
-	restricted_access_message
+	restricted_access_message, load_more_users_message
 )
 from bot.constants.patterns import (
 	ADD_FAVOURITE_PATTERN, REMOVE_FAVOURITE_PATTERN, DESIGNER_ORDERS_PATTERN, PLACED_DESIGNER_ORDERS_PATTERN,
@@ -32,7 +32,7 @@ from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (
 	generate_reply_markup, match_query, fetch_user_data, send_action, update_text_by_keyword, get_key_values,
-	find_obj_in_dict, generate_inline_markup, convert_date, format_output_text
+	find_obj_in_dict, generate_inline_markup, format_output_text
 )
 
 
@@ -342,7 +342,7 @@ async def users_search_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 @send_action(ChatAction.TYPING)
-async def select_users_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def show_users_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
 	""" Функция загрузки и отображения списка пользователей в категории по cat_id """
 
 	query = update.callback_query
@@ -351,68 +351,100 @@ async def select_users_list_callback(update: Update, context: ContextTypes.DEFAU
 	else:
 		query = update
 
-	section = await prepare_current_section(context)
-	query_message = section.get("query_message") or query.data
-	query_data = query_message.split("__")
-	cat_id = query_data[-1].lstrip("category_")
-
-	if len(query_data) > 1:
-		group = int(query_data[0].lstrip("group_"))
-		if group >= len(CAT_GROUP_DATA):
-			return section["state"]
-		group_data = CAT_GROUP_DATA[group]
-
-	else:
-		group = None
-		group_data = None
-
 	priority_group = context.user_data["priority_group"]
 	chat_data = context.chat_data
+	last_messages = chat_data.setdefault("last_messages", {})
+	# local_data = context.chat_data.setdefault("local_data", {})
+	section = get_section(context)
+	query_message = query.data if not section.get("go_back", False) else section.get("query_message")
+
+	query_data = query_message.split("__")
+	group = int(query_data[0].lstrip("group_"))
+	if group >= len(CAT_GROUP_DATA):
+		return
+	group_data = CAT_GROUP_DATA[group]
+	cat_id = query_data[1].lstrip("category_")
+	offset = query_data[2].lstrip("offset_") if len(query_data) > 2 else 0
+	first_load = not bool(offset)
+
 	state = section["state"]
 	menu_markup = back_menu
-	callback = select_users_list_callback
+	callback = show_users_list_callback
+	messages = []
 
-	# загрузим всех пользователей в выбранной категории
-	users = await load_cat_users(query.message, context, cat_id)
-	if not users:
-		return state
-
-	# генерируем инлайн кнопки списка поставщиков
-	inline_markup = generate_users_list(users)
 	categories = chat_data.get(f'{group_data["name"]}_cats' if group_data else "categories")
 	selected_cat = find_obj_in_dict(categories, params={"id": int(cat_id)})
 	if not selected_cat:
-		return state
+		return
 
-	title = f'🗃 Категория *{selected_cat["name"].upper()}*'
-	reply_message = await query.message.reply_text(title, reply_markup=menu_markup)
+	# загрузим пользователей в выбранной категории
+	users = await load_cat_users(query.message, context, cat_id, offset=offset)
+	if not users:
+		if last_messages.get("load_more"):
+			await edit_or_reply_message(
+				context,
+				"Вы достигли конца списка!",
+				message=last_messages.get("load_more"),
+				message_type="info"
+			)
+		return
 
 	subtitle = group_data["title"]
-	inline_message = await query.message.reply_text(subtitle, reply_markup=inline_markup)
-	messages = [reply_message, inline_message]
+	inline_markup = generate_users_list(users)  # генерируем инлайн кнопки списка поставщиков
+
+	if first_load:
+		await prepare_current_section(context)
+		title = f'🗃 Категория *{selected_cat["name"].upper()}*'
+		reply_message = await query.message.reply_text(title, reply_markup=menu_markup)
+		messages.append(reply_message.message_id)
+		inline_message = await query.message.reply_text(subtitle, reply_markup=inline_markup)
+
+	else:
+		await delete_messages_by_key(context, last_messages.get("place_new_order"))
+		await delete_messages_by_key(context, last_messages.get("recommend_new_user"))
+		# TODO: выводить количество подгруженных из всех пользователей
+		inline_message = await edit_or_reply_message(
+			context,
+			subtitle + ' (+10)',
+			message=last_messages.get("load_more"),
+			reply_markup=inline_markup,
+			return_message_id=False
+		)
+
+	messages.append(inline_message.message_id)
+	users_count = len(users)
+
+	if users_count >= 10:
+		offset = int(offset) + users_count
+		last_messages["load_more"] = await load_more_users_message(query.message, group, cat_id, offset)
 
 	if priority_group == Group.DESIGNER:
 		message = await recommend_new_user_message(query.message, category=selected_cat)
-		messages.append(message)
+		last_messages["recommend_new_user"] = message.message_id
 
 		if group == 2:
 			keyboard = SUPPLIERS_REGISTER_KEYBOARD
-			menu_markup = generate_reply_markup(keyboard)
+			if first_load:
+				menu_markup = generate_reply_markup(keyboard)
 
 		else:
 			# выведем в конце сообщение с размещением нового заказа
 			message = await place_new_order_message(query.message, category=selected_cat)
-			messages.append(message)
+			last_messages["place_new_order"] = message.message_id
 
-	add_section(
-		context,
-		state=state,
-		messages=messages,
-		reply_markup=menu_markup,
-		query_message=query_message,
-		callback=callback,
-		selected_cat=cat_id
-	)
+	if first_load:
+		add_section(
+			context,
+			state=state,
+			messages=messages,
+			reply_markup=menu_markup,
+			query_message=query_message,
+			callback=callback,
+			selected_cat=cat_id
+		)
+
+	else:
+		section["messages"].extend(messages)
 
 	return state
 

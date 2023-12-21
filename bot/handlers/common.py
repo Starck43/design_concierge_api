@@ -708,12 +708,25 @@ async def load_categories(
 	return res["data"]
 
 
-async def load_cat_users(message: Message, context: ContextTypes.DEFAULT_TYPE, cat_id: str) -> Optional[List[dict]]:
+async def load_cat_users(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		cat_id: str,
+		offset: int = 0,
+		limit: int = 10
+) -> Optional[List[dict]]:
 	if not cat_id:
 		return None
 
 	# TODO: реализовать кэширование и обновление данных по сигналу, сохраняемому в bot_data или chat_data админом
-	res = await fetch_user_data(params={"category": cat_id})
+	params = {"category": cat_id}
+	if offset:
+		params["offset"] = offset
+
+	if limit:
+		params["limit"] = limit
+
+	res = await fetch_user_data(params=params)
 	if res["error"]:
 		text = f'Ошибка получения списка поставщиков!'
 		await send_error_to_admin(message, context, error=res, text=text)
@@ -1009,13 +1022,12 @@ async def select_supplier_segment(context: ContextTypes.DEFAULT_TYPE, user: dict
 		cols=1
 	)
 
-	_message = await edit_or_reply_message(
+	temp_messages["user_segment"] = await edit_or_reply_message(
 		context,
 		f'🎯 *Сегмент еще не установлен!*\n'
 		f'Подскажите, если работали с этим поставщиком.',
 		reply_markup=inline_markup
 	)
-	temp_messages["user_segment"] = _message.message_id
 
 
 async def trade_dialog_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:

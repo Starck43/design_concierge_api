@@ -213,7 +213,7 @@ def generate_inline_markup(
 			callback_data = callback_data * len(flatten_data if isinstance(data[0], list) else data)
 	elif isinstance(callback_data, list) and callback_data:
 		callback_data = flatten_list(callback_data)
-		data = [data]*len(callback_data) if isinstance(data, str) else [data]
+		# data = data*len(callback_data) if len(data) == 1 else data
 	else:
 		callback_data = [str(i) for i in range(len(flatten_list(data)))]
 

@@ -224,6 +224,16 @@ async def yourself_rate_warning_message(message: Message) -> Message:
 	)
 
 
+async def load_more_users_message(message: Message, group: int, cat_id: int, offset: int) -> int:
+	inline_markup = generate_inline_markup(
+		"➕",
+		callback_data=f'group_{group}__category_{cat_id}__offset_{offset}'
+	)
+
+	reply_message = await message.reply_text(f'Показать еще', reply_markup=inline_markup)
+	return reply_message.message_id
+
+
 async def recommend_new_user_message(message: Message, category: dict = None) -> Message:
 	inline_markup = generate_inline_markup(
 		["➕ Добавить"],

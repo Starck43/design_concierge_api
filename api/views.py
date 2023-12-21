@@ -50,21 +50,18 @@ class CategoryList(ListAPIView):
 		exclude_empty = self.request.query_params.get('exclude_empty')
 		regions = self.request.query_params.getlist('regions')
 
-		if groups or exclude_empty or regions:
-			q = Q()
-			if groups:
-				# groups = list(map(int, groups))
-				q &= Q(group__in=groups)
+		queryset = queryset.annotate(user_count=Count('users'))
 
-			if exclude_empty and not str(exclude_empty).lower() == "false":
-				q &= Q(users__isnull=False)
+		if groups:
+			queryset = queryset.filter(group__in=groups)
 
-			if regions:
-				q &= Q(users__main_region_id__in=regions)
+		if exclude_empty and not str(exclude_empty).lower() == "false":
+			queryset = queryset.filter(users__isnull=False)
 
-			queryset = queryset.filter(q).annotate(user_count=Count('users')).distinct()
+		if regions:
+			queryset = queryset.filter(users__main_region_id__in=regions)
 
-		return queryset.annotate(user_count=Count('users'))
+		return queryset.distinct()
 
 
 class CategoryDetail(RetrieveAPIView):
@@ -91,6 +88,8 @@ class UserList(ListAPIView):
 		return queryset.order_by('-total_rating', 'name')
 
 	def get(self, request, *args, **kwargs):
+		offset = request.query_params.get('offset', 0)
+		limit = request.query_params.get('limit')
 		id = request.query_params.get('id')
 		user_id = request.query_params.get('user_id')
 		is_rated = request.query_params.get('is_rated')
@@ -116,7 +115,15 @@ class UserList(ListAPIView):
 				return Response(status=status.HTTP_404_NOT_FOUND)
 
 		else:
-			return super().get(request, *args, **kwargs)
+			queryset = self.get_queryset()
+
+			if limit:
+				offset = int(offset)
+				limit = int(limit)
+				queryset = queryset[offset:offset+limit]
+
+			serializer = self.get_serializer(queryset, many=True)
+			return Response(serializer.data)
 
 	def get_serializer_context(self):
 		context = super().get_serializer_context()
