@@ -7,5 +7,4 @@ urlpatterns = [
 	path('', RedirectView.as_view(url='/admin')),
 	path("admin/", admin.site.urls),
 	path('api/', include('api.urls')),
-	path('bot/', include('bot.urls')),
 ]
