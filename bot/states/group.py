@@ -27,19 +27,19 @@ class Group(Enum):
 			return Group(3)
 
 	@classmethod
-	def has_role(cls, user_details: dict, role: int):
+	def has_role(cls, user: dict, role: int):
 		"""
 		    Check if the user has a specific role.
 
 		    Args:
-		        user_details : Detail user data.
+		        user : Detail user data.
 		        role (Group): The role to check.
 
 		    Returns:
 		        bool: True if the user has the specified role, False otherwise.
 		"""
-		if user_details:
-			user_groups = cls.get_enum(user_details.get("groups", [3]))
+		if user:
+			user_groups = cls.get_enum(user.get("groups", [3]))
 			return role in user_groups
 		return False
 

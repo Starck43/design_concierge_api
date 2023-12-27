@@ -1,0 +1,87 @@
+# list of resources
+- url: https://worldexpo.pro
+  params:
+    - group: 0
+      query_pathname: "/events"
+      search_query: ""
+      country:
+        name: country
+        value: avstriya
+      city:
+        name:
+        value:
+      sector:
+        name: sector
+        value: dizayn-interera
+        is_query_param: false
+      date_from:
+        name:
+        value: "%B"
+      date_to:
+        name:
+        value:
+
+    - group: 0
+      query_pathname: "/events"
+      search_query: ""
+      country:
+        name:
+        value:
+      city:
+        name:
+        value:
+      sector:
+        name: sector
+        value: arhitektura-i-proektirovanie
+      date_from:
+        name:
+        value: "%B"
+        is_query_param: false
+      date_to:
+        name:
+        value:
+        is_query_param: false
+
+    - group: 1
+      query_pathname: "/events"
+      search_query: ""
+      country:
+        name: country
+        value: germaniya
+      city:
+        name:
+        value:
+        is_query_param: true
+      sector:
+        name: sector
+        value: umnyy-dom
+        is_query_param: true
+      date_from:
+        name:
+        value: "%B"
+        is_query_param: true
+      date_to:
+        name:
+        value:
+        is_query_param: true
+
+  output:
+    root: ".events-feed"
+    children: "article.search-item .item-content"
+    fields:
+    - field: cover
+      selector: ""
+      attribute: "src"
+    - field: title
+      selector: ".item-content-title a"
+    - field: description
+      selector: "p"
+    - field: start_date
+      selector: ".item-content-date"
+    - field: end_date
+      selector: ""
+    - field: location
+      selector: ".search-location"
+    - field: source_link
+      selector: ".item-content-title a"
+      attribute: "href"

@@ -1,5 +1,5 @@
 import unittest
-from bot.utils import extract_fields, data_list_to_string
+from bot.utils import extract_fields, data_to_string
 
 
 class TestListForField(unittest.TestCase):
@@ -38,23 +38,23 @@ class TestDataListToStr(unittest.TestCase):
 		]
 
 	def test_empty_list(self):
-		self.assertEqual(data_list_to_string([], "name"), "")
+		self.assertEqual(data_to_string([], "name"), "")
 
 	def test_single_key(self):
 		result = "Продукт 1, Продукт 2, Продукт 3"
-		self.assertEqual(data_list_to_string(self.arr, "name", separator=", "), result)
+		self.assertEqual(data_to_string(self.arr, "name", separator=", "), result)
 
 	def test_list_of_keys(self):
 		result = "Продукт 1: 100\nПродукт 2: 200\nПродукт 3: 150"
-		self.assertEqual(data_list_to_string(self.arr, ["name", "price"]), result)
+		self.assertEqual(data_to_string(self.arr, ["name", "price"]), result)
 
 	def test_list_of_not_only_keys(self):
 		result = "Продукт 1: 4.5 ⭐\nПродукт 2: 5.0 ⭐\nПродукт 3: 4.0 ⭐"
-		self.assertEqual(data_list_to_string(self.arr, ["name", "rate", "⭐"]), result)
+		self.assertEqual(data_to_string(self.arr, ["name", "rate", "⭐"]), result)
 
 	def test_single_not_key(self):
 		result = "⭐, ⭐, ⭐"
-		self.assertEqual(data_list_to_string(self.arr, ["⭐"], separator=", "), result)
+		self.assertEqual(data_to_string(self.arr, ["⭐"], separator=", "), result)
 
 
 if __name__ == '__main__':

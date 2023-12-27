@@ -1,7 +1,7 @@
 from django.contrib import admin
 
-from bot.constants.data import categories_list, users_list
-from bot.constants.regions import ALL_REGIONS
+from .data import CATEGORIES, USERS
+from .regions import ALL_REGIONS
 from .forms import UserForm
 
 from .models import (
@@ -10,15 +10,16 @@ from .models import (
 	Country,
 	Region,
 	User,
-	Designer,
-	Outsourcer,
-	Supplier,
 	Favourite,
 	Rating,
 	Feedback,
 	Order,
-	File,
+	Support,
+	File, Log, Event,
 )
+
+admin.site.site_title = 'Консьерж Сервис'
+admin.site.site_header = 'Консьерж Сервис'
 
 
 class CategoryInline(admin.TabularInline):
@@ -93,7 +94,7 @@ class CategoryAdmin(admin.ModelAdmin):
 	actions = ['import_categories']
 
 	def import_categories(self, request, queryset):
-		for data in categories_list:
+		for data in CATEGORIES:
 			if data["id"] >= 0:
 				group_code = data['group']
 				user_group = UserGroup.objects.get(code=group_code)
@@ -111,15 +112,11 @@ class CategoryAdmin(admin.ModelAdmin):
 class UserAdmin(admin.ModelAdmin):
 	form = UserForm
 	inlines = [FileInlineAdmin]
-	search_fields = ['name', 'username']
+	search_fields = ['name', 'contact_name', 'username']
 	actions = ['import_users', 'update_ratings']
-	readonly_fields = ['user_id','total_rating']
-	list_display = ['id', 'user_id', 'username', 'access', 'symbol_rate']
-	list_display_links = ['id', 'user_id', 'username']
-	#
-	# @admin.display(description='Имя пользователя')
-	# def user_name(self, obj):
-	# 	return obj.name or obj.username
+	readonly_fields = ['total_rating']
+	list_display = ['id', 'user_id', 'name', 'access', 'symbol_rate']
+	list_display_links = ['id', 'user_id', 'name']
 
 	@admin.display(description='Рейтинг', empty_value='')
 	def symbol_rate(self, obj):
@@ -137,12 +134,18 @@ class UserAdmin(admin.ModelAdmin):
 	update_ratings.short_description = "Обновить общий рейтинг у выбранных записей"
 
 	def import_users(self, request, queryset):
-		for data in users_list:
+		for data in USERS:
+			try:
+				User.objects.get(id=data['id'])
+				continue
+			except User.DoesNotExist:
+				pass
+
 			if data['id'] >= 0:
 				category = Category.objects.get(pk=data['category'])
 				region = Region.objects.get(osm_id=115100)
 				user = User(
-					username=data['name'],
+					name=data['name'],
 					address=data.get('address', ''),
 					phone=data.get('phone', ''),
 				)
@@ -157,12 +160,12 @@ class UserAdmin(admin.ModelAdmin):
 @admin.register(Rating)
 class RatingAdmin(admin.ModelAdmin):
 	actions = ['delete_selected']
-	list_display = ['receiver', 'author_user_name']
+	list_display = ['receiver', 'author_name']
 	list_display_links = ['receiver']
 
 	@admin.display(description='Автор оценки')
-	def author_user_name(self, obj):
-		return obj.author.username
+	def author_name(self, obj):
+		return obj.author.name or "<отсутствует>"
 
 	def get_exclude(self, request, obj=None):
 		exclude_fields = super().get_exclude(request, obj)
@@ -201,12 +204,24 @@ class OrderAdmin(admin.ModelAdmin):
 
 	@admin.display(description='Исполнитель', empty_value='')
 	def approved_executor(self, obj):
-		return "✅ " + obj.executor.username if obj.executor and obj.executor not in obj.responded_users.all() else ""
+		return "✳️ " + obj.executor.name if obj.executor and obj.executor not in obj.responded_users.all() else ""
+
+
+@admin.register(Event)
+class EventAdmin(admin.ModelAdmin):
+	list_display = ['type', 'title', 'start_date', 'end_date']
+	list_display_links = ['title']
+	ordering = ['start_date']
+	list_filter = ['type', 'group']
+	date_hierarchy = 'start_date'
+	list_per_page = 20
 
 
 admin.site.register(Category, CategoryAdmin)
 # admin.site.register(Outsourcer)
 # admin.site.register(Supplier)
 admin.site.register(Favourite)
+admin.site.register(Support)
 admin.site.register(Feedback)
 admin.site.register(File)
+admin.site.register(Log)

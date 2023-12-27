@@ -68,6 +68,31 @@ class UserGroup(models.Model):
 		return Group.get_label_by_value(self.code)
 
 
+class Category(models.Model):
+	name = models.CharField('Название категории/вида деятельности', max_length=100)
+	group = models.ForeignKey(
+		UserGroup,
+		verbose_name='Группа',
+		to_field='code',
+		on_delete=models.SET_NULL,
+		related_name='categories',
+		null=True
+	)
+	keywords = models.CharField(
+		'Ключевые слова',
+		max_length=255,
+		help_text='Ключевые поисковые фразы для детального описания категории',
+		blank=True
+	)
+
+	class Meta:
+		verbose_name = 'Вид деятельности'
+		verbose_name_plural = 'Виды деятельности'
+
+	def __str__(self):
+		return f'{self.name}'
+
+
 class Country(models.Model):
 	name = models.CharField('Название страны', max_length=20, unique=True)
 	code = models.CharField('Буквенный код страны', max_length=2, unique=True)
@@ -88,7 +113,13 @@ class Region(models.Model):
 	)
 	osm_id = models.IntegerField('OSM код', unique=True, blank=True)
 	place_id = models.IntegerField('Код местности', unique=True, blank=True)
-	in_top = models.BooleanField('В списке рекомендуемых', null=True, blank=True, default=False)
+	in_top = models.BooleanField(
+		'В списке рекомендуемых',
+		null=True,
+		blank=True,
+		default=False,
+		help_text='Предложение выбрать регион из списка на этапе регистрации'
+	)
 
 	class Meta:
 		verbose_name = 'Регион'
@@ -98,42 +129,26 @@ class Region(models.Model):
 		return self.name
 
 
-class Category(models.Model):
-	name = models.CharField('Название категории/вида деятельности', max_length=100)
-	group = models.ForeignKey(
-		UserGroup,
-		verbose_name='Группа',
-		to_field='code',
-		on_delete=models.SET_NULL,
-		related_name='categories',
-		null=True
-	)
-
-	class Meta:
-		verbose_name = 'Вид деятельности'
-		verbose_name_plural = 'Виды деятельности'
-
-	def __str__(self):
-		return f'{self.name}'
-
-
 class User(models.Model):
 	ACCESS_CHOICES = ((-2, 'Недоступен'), (-1, 'Не подтвержден'), (0, 'Базовый'), (1, 'Расширенный'), (2, 'Премиум'),)
 	SEGMENT_CHOICES = ((0, 'Премиум, Средний+'), (1, 'Средний'), (2, 'Средний-, Эконом'),)
 
 	user_id = models.CharField('ID пользователя', max_length=10, blank=True)
-	username = models.CharField('Имя пользователя', max_length=50)
-	name = models.CharField('Полное название', max_length=150, blank=True)
+	name = models.CharField('Название', max_length=150)
+	contact_name = models.CharField('Контактное лицо', max_length=50, blank=True)
+	username = models.CharField('Имя пользователя Телеграм', max_length=30, blank=True)
 	access = models.SmallIntegerField('Вид доступа', choices=ACCESS_CHOICES, default=0)
 	description = models.TextField('Описание', blank=True)
 	categories = models.ManyToManyField(Category, verbose_name='Виды деятельности', related_name='users')
-	business_start_year = models.PositiveSmallIntegerField('Опыт работы', null=True, blank=True,
-	                                                       help_text="Год начала деятельности")
-	main_region = models.ForeignKey(
-		Region, verbose_name='Основной регион', on_delete=models.SET_NULL, related_name='user_main_region', null=True
+	business_start_year = models.PositiveSmallIntegerField(
+		'Опыт работы', null=True, blank=True, help_text="Год начала деятельности"
 	)
-	regions = models.ManyToManyField(Region, verbose_name='Дополнительные регионы', related_name='users_add_regions',
-	                                 blank=True)
+	main_region = models.ForeignKey(
+		Region, verbose_name='Основной регион', on_delete=models.SET_NULL, related_name='main_region_users', null=True
+	)
+	regions = models.ManyToManyField(
+		Region, verbose_name='Дополнительные регионы', related_name='regions_users', blank=True
+	)
 	segment = models.SmallIntegerField('Сегмент рынка', choices=SEGMENT_CHOICES, null=True, blank=True)
 	address = models.CharField('Адрес', max_length=150, null=True, blank=True)
 	phone = models.CharField('Телефон', validators=[phone_regex], max_length=20, blank=True)
@@ -141,9 +156,15 @@ class User(models.Model):
 	socials_url = models.URLField('Ссылка на соцсеть', blank=True)
 	site_url = models.URLField('Ссылка на сайт', blank=True)
 	created_date = models.DateField('Дата регистрации', auto_now_add=True)
-
+	keywords = models.CharField(
+		'Ключевые слова',
+		max_length=255,
+		help_text='Ключевые поисковые фразы для детального описания пользователя',
+		blank=True
+	)
 	total_rating = models.FloatField('Общий рейтинг', default=0)
-	token = models.ForeignKey(Token, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_token')
+	token = models.ForeignKey(Token, verbose_name='Токен', on_delete=models.SET_NULL, null=True, blank=True,
+	                          related_name='user_token')
 
 	class Meta:
 		verbose_name = 'Пользователь'
@@ -151,7 +172,7 @@ class User(models.Model):
 		ordering = ('-created_date',)
 
 	def __str__(self):
-		return f'{self.name or self.username}'
+		return self.name
 
 	def save(self, *args, **kwargs):
 		is_new = self.pk is None
@@ -252,6 +273,18 @@ class User(models.Model):
 	def voted_users_count(self):
 		return self.voted_users.count()
 
+	@property
+	def placed_orders_count(self):
+		return self.owner_orders.exclude(status=0).count()
+
+	@property
+	def done_orders_count(self):
+		return self.owner_orders.filter(status__in=[3, 4]).count()
+
+	@property
+	def executor_done_orders_count(self):
+		return self.executor_orders.filter(status=3).count()
+
 	def get_token(self):
 		if self.access > 0:
 			return self.generate_token()
@@ -347,7 +380,7 @@ class Rating(models.Model):
 
 	@property
 	def avg_rating(self):
-		if self.receiver.categories.filter(group=1).exists(): # required fields
+		if self.receiver.categories.filter(group=1).exists():  # required fields
 			fields = [
 				field.name for field in self._meta.fields
 				if isinstance(field, models.PositiveSmallIntegerField) and not field.null
@@ -410,7 +443,7 @@ class Order(models.Model):
 		User,
 		verbose_name='Автор заказа',
 		on_delete=models.CASCADE,
-		related_name='orders',
+		related_name='owner_orders',
 		limit_choices_to=Q(categories__group=Group.DESIGNER.value),
 	)
 	title = models.CharField('Название заказа', max_length=100)
@@ -424,7 +457,7 @@ class Order(models.Model):
 	responded_users = models.ManyToManyField(
 		User,
 		verbose_name='Откликнувшиеся на заказ',
-		related_name='user_order',
+		related_name='responded_users_orders',
 		limit_choices_to=Q(categories__group=Group.OUTSOURCER.value),
 		blank=True,
 	)
@@ -432,7 +465,7 @@ class Order(models.Model):
 		User,
 		verbose_name='Выбран в качестве исполнителя',
 		on_delete=models.SET_NULL,
-		related_name='executor_order',
+		related_name='executor_orders',
 		limit_choices_to=Q(categories__group=Group.OUTSOURCER.value),
 		null=True,
 		blank=True
@@ -464,6 +497,30 @@ class Order(models.Model):
 		return self.title
 
 
+class Support(models.Model):
+	user = models.ForeignKey(User, verbose_name='Автор', on_delete=models.CASCADE, related_name='asked_users')
+	message_id = models.IntegerField('ID сообщения', blank=True)
+	question = models.TextField('Вопрос', blank=True)
+	answer = models.TextField('Ответ', blank=True)
+	created_date = models.DateTimeField('Дата регистрации', auto_now=True)
+	replied_date = models.DateTimeField('Дата ответа', blank=True, null=True, editable=False)
+
+	class Meta:
+		verbose_name = 'Вопрос в техподдержку'
+		verbose_name_plural = 'Вопросы в техподдержку'
+
+	def __str__(self):
+		return self.user.name
+
+
+class Message(models.Model):
+	sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_messages')
+	receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='received_messages')
+	order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='messages', null=True, blank=True)
+	text = models.TextField('Текст сообщения')
+	created_at = models.DateTimeField('Дата создания', auto_now_add=True)
+
+
 class File(models.Model):
 	user = models.ForeignKey(User, verbose_name='Автор', on_delete=models.CASCADE, related_name='files')
 	file = models.FileField(upload_to=user_directory_path, storage=MediaFileStorage(), blank=True)
@@ -479,3 +536,45 @@ class File(models.Model):
 			if os.path.exists(file_path):
 				os.remove(file_path)
 		super().delete(*args, **kwargs)
+
+
+class Log(models.Model):
+	STATUS_CHOICES = (
+		(0, 'error'),
+		(1, 'warning'),
+		(2, 'successful'),
+		(3, 'start'),
+		(4, 'finish'),
+		(5, 'interruption'),
+	)
+	user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+	message = models.CharField('Сообщение', max_length=255)
+	status = models.PositiveSmallIntegerField('Статус заказа', choices=STATUS_CHOICES, blank=True)
+	error_code = models.CharField('Код ошибки', max_length=3, null=True)
+	created_at = models.DateTimeField('Дата создания', auto_now_add=True)
+
+	def __str__(self):
+		return f'{self.message} - [{self.error_code or "OK"}]'
+
+
+class Event(models.Model):
+	TYPE_CHOICES = ((0, 'местные события'), (1, 'события в стране'),(2, 'международные события'),)
+	type = models.PositiveSmallIntegerField('Категория события', choices=TYPE_CHOICES)
+	group = models.ManyToManyField(UserGroup, related_name='events_for_groups', verbose_name='Группа', blank=True)
+	title = models.CharField('Название события', max_length=255)
+	description = models.TextField('Описание события', blank=True)
+	location = models.CharField('Место проведения', max_length=255, blank=True)
+	start_date = models.DateField('Дата начала', blank=True)
+	end_date = models.DateField('Дата окончания', blank=True)
+	source_link = models.URLField('Ссылка на источник', blank=True)
+	cover = models.URLField('Обложка события', blank=True)
+	excluded = models.BooleanField('Исключить для показа', default=False)
+	modified_at = models.DateField('Дата последнего обновления', auto_now=True)
+
+	class Meta:
+		verbose_name = 'Событие'
+		verbose_name_plural = 'События'
+		ordering = ('start_date',)
+
+	def __str__(self):
+		return self.title

@@ -7,6 +7,7 @@ venv/
 .idea
 /src
 /media/
+/logs/
 migrations/
 .DS_Store
 __pycache__/

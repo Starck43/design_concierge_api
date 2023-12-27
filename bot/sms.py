@@ -2,7 +2,7 @@ import re
 from os import getenv
 import dataclasses
 
-from bot.logger import log
+from logger import log
 from bot.utils import fetch
 
 
@@ -22,7 +22,7 @@ class SMSTransport:
 	async def send(self, body: str, to: str) -> TSMSResponse:
 		phone = to.replace('+', '')
 		if not self.validate_phone(phone):
-			log.error(f"Phone validation: Invalid number {phone}")
+			log.warning(f"Phone validation: Invalid number {phone}")
 			return TSMSResponse()
 
 		params = {"api_id": self._API_ID, "to": phone, "msg": body, "json": 1}
@@ -43,7 +43,7 @@ class SMSTransport:
 			response["status_code"] = phone["status_code"]
 			response["status_text"] = phone["status_text"]
 
-		log.info("SMS error status %s", response)
+		log.error("SMS error status %s", response)
 		return TSMSResponse(
 			status_code=response["status_code"],
 			status_text=response["status_text"],

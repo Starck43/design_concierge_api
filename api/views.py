@@ -1,23 +1,28 @@
-from datetime import date
+import itertools
+from datetime import date, datetime
 from functools import cached_property
 
 import requests
 from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F
+from django.db.models import Q, F, Count, Field, Max
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import (
-	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, RetrieveAPIView
+	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, RetrieveAPIView, ListCreateAPIView
 )
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rating, Region, File, Order, Favourite, Group
+from api.models import Category, User, Rating, Region, File, Order, Favourite, Support, Message, Log, Event
+from .logic import get_date_range
+from .parser import load_events
 from .serializers import (
 	CategorySerializer, UserListSerializer, RatingSerializer, RegionSerializer, UserDetailSerializer,
-	FileUploadSerializer, OrderSerializer, FavouriteSerializer
+	FileUploadSerializer, OrderSerializer, FavouriteSerializer, SupportSerializer, MessageSerializer, LogSerializer,
+	EventSerializer
 )
 
 
@@ -37,29 +42,22 @@ class CategoryList(ListAPIView):
 
 	def get_queryset(self):
 		queryset = super().get_queryset()
-		groups = self.request.query_params.getlist('group')
-		related_users = self.request.query_params.get('related_users')
-		region = self.request.query_params.get('region')
+		groups = self.request.query_params.getlist('groups')
+		exclude_empty = self.request.query_params.get('exclude_empty')
+		regions = self.request.query_params.getlist('regions')
 
-		# Check if any of the parameters are present
-		if groups or related_users or region:
-			# Create an empty Q object to hold the filters
-			q = Q()
+		queryset = queryset.annotate(user_count=Count('users'))
 
-			if groups:
-				groups = list(map(int, groups))
-				q &= Q(group__in=groups)
+		if groups:
+			queryset = queryset.filter(group__in=groups)
 
-			if related_users:
-				users_filter = Q(users__isnull=False)
-				if region:
-					users_filter &= Q(user_region_id=region)
-				q &= users_filter
+		if exclude_empty and not str(exclude_empty).lower() == "false":
+			queryset = queryset.filter(users__isnull=False)
 
-			# Apply the filters to the queryset
-			queryset = queryset.filter(q).distinct()
+		if regions:
+			queryset = queryset.filter(users__main_region_id__in=regions)
 
-		return queryset
+		return queryset.distinct()
 
 
 class CategoryDetail(RetrieveAPIView):
@@ -68,7 +66,7 @@ class CategoryDetail(RetrieveAPIView):
 
 
 class UserList(ListAPIView):
-	queryset = User.objects.all()
+	queryset = User.objects.filter(access__gt=-1)
 	serializer_class = UserListSerializer
 
 	def get_queryset(self):
@@ -83,9 +81,11 @@ class UserList(ListAPIView):
 			groups = list(map(int, groups))
 			queryset = queryset.filter(categories__group__in=groups)
 
-		return queryset.order_by('-total_rating', 'username')
+		return queryset.order_by('-total_rating', 'name')
 
 	def get(self, request, *args, **kwargs):
+		offset = request.query_params.get('offset', 0)
+		limit = request.query_params.get('limit')
 		id = request.query_params.get('id')
 		user_id = request.query_params.get('user_id')
 		is_rated = request.query_params.get('is_rated')
@@ -111,7 +111,15 @@ class UserList(ListAPIView):
 				return Response(status=status.HTTP_404_NOT_FOUND)
 
 		else:
-			return super().get(request, *args, **kwargs)
+			queryset = self.get_queryset()
+
+			if limit:
+				offset = int(offset)
+				limit = int(limit)
+				queryset = queryset[offset:offset+limit]
+
+			serializer = self.get_serializer(queryset, many=True)
+			return Response(serializer.data)
 
 	def get_serializer_context(self):
 		context = super().get_serializer_context()
@@ -152,8 +160,9 @@ class UserDetail(APIView):
 			data = {
 				"id": user.id,
 				"user_id": user.user_id,
-				"name": user.__str__(),
-				"username": user.username,
+				"name": user.name,
+				"contact_name": user.contact_name,
+				"username": user.username or "",
 				"categories": user.categories.values_list("id", flat=True),
 				"groups": user.categories.values_list('group', flat=True).distinct(),
 				"total_rating": user.total_rating
@@ -181,15 +190,25 @@ class UserDetail(APIView):
 		serializer = UserDetailSerializer(user, context=context)
 		return Response(serializer.data, status=status.HTTP_200_OK, headers=headers)
 
-	def post(self, request):
-		if not request.path.endswith('/create/'):
-			return Response(status=status.HTTP_400_BAD_REQUEST)
+	def post(self, request, pk=None):
+		if pk is None:
+			if not request.path.endswith('/create/'):
+				return Response(status=status.HTTP_400_BAD_REQUEST)
 
-		serializer = UserDetailSerializer(data=request.data)
+			serializer = UserDetailSerializer(data=request.data)
+			if serializer.is_valid():
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-		if serializer.is_valid():
-			serializer.save()
-			return Response(serializer.data, status=status.HTTP_201_CREATED)
+		else:
+			user = self.get_user(pk)
+			if not isinstance(user, User):
+				return user
+
+			serializer = UserDetailSerializer(user, data=request.data)
+			if serializer.is_valid():
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_200_OK)
 
 		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -197,6 +216,7 @@ class UserDetail(APIView):
 		user = self.get_user(pk)
 		if not isinstance(user, User):
 			return user
+
 		serializer = UserDetailSerializer(user, data=request.data, partial=True)
 		if serializer.is_valid():
 			serializer.save()
@@ -334,7 +354,7 @@ class OrderListView(ListAPIView):
 		if exclude_owner_id:
 			q &= ~Q(owner=exclude_owner_id)
 
-		return queryset.filter(q).order_by('-status', 'executor', 'expire_date')
+		return queryset.filter(q).order_by('-status', '-executor', 'expire_date')
 
 	def get_queryset(self):
 		return self.filtered_queryset.distinct()
@@ -347,10 +367,6 @@ class OrderDetail(RetrieveUpdateDestroyAPIView):
 
 	def post(self, request, *args, **kwargs):
 		if request.path.endswith('/create/'):
-			# owner_id = request.data.get('owner')
-			# if owner_id:
-			# 	owner = User.objects.get(id=owner_id)
-			# 	request.data['owner'] = owner
 			serializer = self.get_serializer(data=request.data, partial=True)
 			if serializer.is_valid():
 				serializer.save()
@@ -375,7 +391,8 @@ class OrderDetail(RetrieveUpdateDestroyAPIView):
 				user_id = request.query_params.get('clear_executor')
 				if user_id:
 					instance.executor = None
-					instance.remove_responding_user(user_id)  # удаление существующего исполнителя из списка претендентов
+					instance.remove_responding_user(
+						user_id)  # удаление существующего исполнителя из списка претендентов
 
 				serializer.save()
 
@@ -419,13 +436,61 @@ class RatingQuestionsView(APIView):
 class UserFieldNamesView(APIView):
 	""" Чтение названий полей модели User"""
 
+	@classmethod
+	def get_fields(cls):
+		sortable_private_fields = [f for f in User._meta.private_fields if isinstance(f, Field)]
+		return sorted(itertools.chain(User._meta.concrete_fields, sortable_private_fields, User._meta.many_to_many),
+		              key=lambda f: f.creation_counter)
+
 	def get(self, request, *args, **kwargs):
-		excludes = ["id", "user_id", "total_rating", "created_date", "token"]
+		fields = [
+			'name', 'contact_name', 'username', 'description', 'categories', 'main_region', 'regions',
+			'business_start_year', 'segment', 'address', 'phone', 'email', 'socials_url', 'site_url'
+		]
+		excludes = [
+			"id", "access", "user_id", "total_rating", "business_start_year", "created_date", "keywords", "token"
+		]
+
 		field_names = {
-			f.name: f.verbose_name or f.name for f in User._meta.get_fields()
-			if f.name not in excludes and not isinstance(f, (ManyToOneRel, ManyToManyRel, OneToOneRel))
+			field.name: field.verbose_name or field.name for field in self.get_fields()
+			if field.name not in excludes
 		}
 		return Response(field_names)
+
+
+class SupportListView(ListCreateAPIView):
+	serializer_class = SupportSerializer
+
+	def get_queryset(self):
+		user_id = self.kwargs.get('user_id')
+		if user_id:
+			return Support.objects.filter(user__user_id=user_id)
+
+		return Support.objects.all()
+
+
+class SupportDetail(RetrieveUpdateDestroyAPIView):
+	serializer_class = SupportSerializer
+
+	def get_object(self):
+		user_id = self.kwargs['user_id']
+		message_id = self.kwargs['message_id']
+		return get_object_or_404(Support, user__user_id=user_id, message_id=int(message_id))
+
+	def post(self, request, user_id, message_id):
+		user = User.objects.get(user_id=user_id)
+		support, created = Support.objects.get_or_create(user=user, message_id=message_id)
+		serializer = SupportSerializer(support, data=request.data, partial=True)
+		if serializer.is_valid():
+			if created:
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_201_CREATED)
+			else:
+				if support.answer:
+					support.replied_date = timezone.now()
+				serializer.update(support, serializer.validated_data)
+				return Response(serializer.data, status=status.HTTP_200_OK)
+		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class FileUploadView(APIView):
@@ -448,13 +513,113 @@ class FileUploadView(APIView):
 					successfully_saved_files.append(url)
 
 			if len(successfully_saved_files) == len(files):
-				message = 'Все файлы были получены успешно!'
+				message = 'Файлы успешно отправлены!'
 			elif len(successfully_saved_files) > 0:
-				message = 'Только часть файлов была получена!'
+				message = 'Файлы частично отправлены!'
 			else:
-				message = 'Файлы не были получены!'
+				message = 'Ошибка получения файлов!'
 
 			return Response({'message': message, 'saved_files': successfully_saved_files}, status=201)
 
 		else:
 			return Response(serializer.errors, status=400)
+
+
+class MessageListCreateView(APIView):
+	lookup_field = 'order_id'
+
+	def get(self, request, order_id):
+		return Message.objects.filter(order=order_id)
+
+	def post(self, request, *args, **kwargs):
+		if request.path.endswith('/create/'):
+			serializer = MessageSerializer(data=request.data, partial=True)
+			if serializer.is_valid():
+				serializer.save()
+				return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class UserSearchView(APIView):
+	def get(self, request):
+		query_params = request.query_params
+
+		categories = query_params.getlist('categories', [])
+		total_rating = query_params.get('rating', None)
+		segment = query_params.get('segment', None)
+		keywords = query_params.get('keywords', None)
+
+		_AND = Q()
+
+		if categories:
+			_AND &= Q(categories__in=categories)
+
+		if total_rating:
+			_AND &= Q(total_rating__gte=total_rating)
+
+		if segment:
+			_AND &= Q(segment=segment)
+
+		if keywords:
+			keywords_list = keywords.split(",")
+			_OR = Q()
+			for keyword in keywords_list:
+				_OR |= (Q(name__icontains=keyword) | Q(username__icontains=keyword)) | Q(keywords__icontains=keyword)
+				_OR |= Q(description__icontains=keyword) | Q(address__icontains=keyword)
+				_OR |= Q(categories__name__icontains=keyword) | Q(categories__keywords__icontains=keyword)
+				_OR |= Q(site_url__icontains=keyword)
+			_AND &= Q(_OR)
+
+		queryset = User.objects.filter(_AND).distinct()
+		serializer = UserListSerializer(queryset, many=True)
+		return Response(serializer.data)
+
+
+class LogView(APIView):
+	queryset = Log.objects.all()
+	serializer_class = LogSerializer
+
+	def post(self, request):
+		data = request.data.copy()
+		user_id = data.pop('user_id', None)
+		user = User.objects.filter(user_id=user_id).first()
+		if user:
+			data['user'] = user.id
+
+		serializer = LogSerializer(data=data, partial=True)
+		if serializer.is_valid():
+			serializer.save()
+			return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class EventListView(APIView):
+	def get(self, request, **kwargs):
+		group = request.query_params.get('group', None)
+		month = request.query_params.get('month')
+		year = request.query_params.get('year')
+		events_type = int(request.query_params.get('events_type'))
+		now = datetime.now()
+		group_list = [int(group)] if group is not None else [0, 1]
+
+		query = Q(type=events_type, group__code__in=group_list, excluded=False)
+		events = Event.objects.filter(query)
+		# Получаем дату последнего обновления событий
+		last_update = events.aggregate(Max('modified_at'))['modified_at__max']
+		# получаем диапазон поиска событий в таблице в зависимости от переданных параметров запроса
+		start_date, end_date = get_date_range(datetime.strptime(month + "." + year, "%m.%Y") if month else None)
+
+		# Если в дате последнего обновления сменился месяц, то выполним загрузку событий и удалим прошедшие события
+		if not events or events and last_update and last_update.month != now.month:
+			# Удаляем прошедшие события из базы данных
+			events.filter(end_date__month__lt=now.month).delete()
+
+			# Парсим и загружаем новые события в своей категории для группы в БД
+			load_events(events_type, int(group), start_date, end_date)
+
+		query &= Q(start_date__gte=start_date, start_date__lte=end_date)
+		# Получаем события для группы
+		events = Event.objects.filter(query)
+
+		serializer = EventSerializer(events, many=True)
+		return Response(serializer.data)

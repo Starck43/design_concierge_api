@@ -1,26 +1,29 @@
-from typing import Union, List, Optional, Tuple, Callable, Literal
+from asyncio import sleep
+from typing import Union, List, Optional, Tuple, Callable, Literal, Dict
 
 from telegram import (
-	Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery, Bot, helpers, InlineKeyboardButton
+	Update, Message, ReplyKeyboardMarkup, InlineKeyboardMarkup, CallbackQuery, Bot, helpers, ReplyKeyboardRemove,
+	ChatMember
 )
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
-from bot.bot_settings import ADMIN_CHAT_ID
-from bot.constants.keyboards import BACK_KEYBOARD, ORDER_EXECUTOR_KEYBOARD, ORDER_RESPOND_KEYBOARD, SEGMENT_KEYBOARD
-from bot.constants.menus import main_menu, done_menu, back_menu
+from bot.bot_settings import ADMIN_CHAT_ID, TRADE_GROUP_ID, SANDBOX_GROUP_ID
+from bot.constants.keyboards import BACK_KEYBOARD, SEGMENT_KEYBOARD
+from bot.constants.menus import main_menu
 from bot.constants.messages import (
-	offer_for_registration_message, share_link_message, place_new_order_message, send_unknown_question_message
+	offer_for_registration_message, share_link_message, send_unknown_question_message, confirm_region_message,
+	join_chat_message
 )
-from bot.constants.patterns import BACK_PATTERN, BACK_TO_TOP_PATTERN
-from bot.constants.static import ORDER_STATUS, ORDER_RELATED_USERS_TITLE, NO_ORDERS_MESSAGE_TEXT
+from bot.constants.patterns import BACK_PATTERN, BACK_TO_TOP_PATTERN, SUPPORT_PATTERN, CANCEL_PATTERN
+from bot.constants.static import MESSAGE_TYPE, CAT_GROUP_DATA, CHAT_GROUPS_DATA
 from bot.entities import TGMessage
-from bot.logger import log
+from logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (
-	fetch_data, filter_list, generate_inline_markup, fetch_user_data, find_obj_in_list, extract_fields,
-	match_query, dict_to_formatted_text, get_formatted_date, format_output_text, update_inline_keyboard
+	fetch_data, generate_inline_markup, fetch_user_data, find_obj_in_dict, extract_fields, list_to_dict,
+	match_query, dict_to_formatted_text, update_inline_markup, fuzzy_compare, format_output_link, group_objects_by_date
 )
 
 
@@ -40,7 +43,10 @@ async def user_authorization(update: Update, context: ContextTypes.DEFAULT_TYPE)
 			return False
 		else:
 			text = "Ошибка авторизации."
-			await catch_server_error(update.message, context, error=res, text=text)
+			if res["status_code"] == 503:
+				text = "Ошибка соединения с сервером."
+			await update.message.reply_text(f'❗️{text}\nПопробуйте зайти в Консьерж Сервис повторно!')
+			await send_error_to_admin(update.message, context, error=res, text=text)
 			return None
 	else:
 		user_data["details"] = res["data"]
@@ -124,7 +130,7 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE, level: int
 async def go_back_section(
 		update: Union[Update, CallbackQuery],
 		context: ContextTypes.DEFAULT_TYPE,
-		command: Literal["back", "top"] = None,
+		message_text: str = None,
 		level: int = -1
 ) -> str:
 	""" Возврат к предыдущей секции или переход в начало """
@@ -140,82 +146,82 @@ async def go_back_section(
 		except TelegramError:
 			pass
 
-	query_message = command or query.message.text
-	if not match_query(BACK_PATTERN, query_message):
-		section = get_section(context)
+	section = get_section(context)
+	query_message = query.message.text
+
+	# если сообщение касается техподдержки
+	if match_query(SUPPORT_PATTERN, query_message):
+		return await message_for_admin_callback(update, context)
+
+	# или если сообщение не связано с возвратом или отменой, то будем считать, что это неизвестный вопрос
+	elif not match_query(BACK_PATTERN + "|" + CANCEL_PATTERN, query_message):
 		await send_unknown_question_message(query.message, context, reply_markup=section["reply_markup"])
 		return section["state"]
 
-	current_section = pop_section(context)  # удалим секцию из навигации
+	# удалим все сохраненные значения в рабочих переменных
+	chat_data["local_data"] = {}
 	await delete_messages_by_key(context, "temp_messages")
 	await delete_messages_by_key(context, "warn_message_id")
 	await delete_messages_by_key(context, "last_message_id")
 	await delete_messages_by_key(context, "last_message_ids")
+
+	current_section = pop_section(context)  # удалим тек секцию из навигации
 	if current_section:
-		await delete_messages_by_key(context, current_section.get("messages"))
-	chat_data["local_data"] = {}  # обнулим временные сохраненные значения на предыдущем уровне
+		await delete_messages_by_key(context, current_section.get("messages"))  # удалим все сообщения из тек секции
 
 	# если нажата кнопка "В начало", то присвоим нулевой индекс
 	if not current_section or match_query(BACK_TO_TOP_PATTERN, query_message) or len(chat_data["sections"]) == 1:
 		section_index = 0
 	else:
 		section_index = level
-	back_section = get_section(context, section_index)
 
+	# получим предыдущую секцию, к которой возвращаемся
+	back_section = get_section(context, section_index)
+	# print("back section: \n", back_section)
 	# если необходимо перейти в начало меню или не найден уровень раздела для возврата
 	if section_index == 0 or not back_section:
 		section = await init_start_section(context, state=MenuState.START)
 		return section["state"]
 
 	state = back_section.get("state", None)
-	leave_messages = back_section.get("leave_messages", False)
+	keep_messages = back_section.get("keep_messages", False)
 	callback = back_section.get("callback")
 
-	if callback:  # если указан колбэк, то перейдем по нему, установив флаг возврата
-		if leave_messages:
-			return state
-		else:
+	# если на предыдущем уровне не было установлено свойство сохранить сообщения на экране, то выведем их
+	if not keep_messages:
+		if callback:  # если указан колбэк, то перейдем по нему, установив флаг возврата
 			back_section["go_back"] = True
-			return await callback(update, context)
+			state = await callback(update, context)
 
-	if leave_messages:
-		return state
+		else:
+			# если нет колбэка, но есть сохраненные сообщения у предыдущего раздела, то выведем их
+			await TGMessage.display_section_messages(context, back_section)
 
-	# если нет колбэка, но есть сохраненные TGMessage сообщения у раздела ниже, то выведем все не пустые
-	reply_markup = back_section.get("reply_markup", None)
-	tg_messages = []
-	for message in back_section.get("messages", []):
-		if isinstance(message, TGMessage) and message.text:
-			_message = await update.message.reply_text(
-				f'*{message.text.upper()}*' if not message.reply_markup and reply_markup else message.text,
-				reply_markup=message.reply_markup or reply_markup
-			)
-			# единожды добавим к сообщению без reply_markup нижнюю клавиатуру
-			if not message.reply_markup and reply_markup:
-				reply_markup = None
-			tg_messages.append(TGMessage.create_message(_message))
+	if message_text or keep_messages:
+		if not message_text or message_text == "back":
+			message_text = f'Вернулись в *{str(back_section["state"]).upper()}*'
 
-	# обновим id сообщений, которые показали в текущем разделе
-	back_section["messages"] = tg_messages
+		back_message = await query.message.reply_text(message_text, reply_markup=back_section["reply_markup"])
+		back_section["messages"].append(back_message.message_id)
 
 	return state
 
 
-async def prepare_current_section(context: ContextTypes.DEFAULT_TYPE, leave_messages: bool = False) -> dict:
+async def prepare_current_section(context: ContextTypes.DEFAULT_TYPE, keep_messages: bool = False) -> dict:
 	""" Получение и подготовка данных из последнего выбранного раздела перед переходом в новый """
 	current_section = get_section(context).copy()
 	is_back = current_section.get("go_back", False)
 
 	# если переходим в следующий раздел, а не возвращаемся назад
 	if not is_back:
-		update_section(context, leave_messages=leave_messages)
+		update_section(context, keep_messages=keep_messages)
 
 		await delete_messages_by_key(context, "warn_message_id")
 		await delete_messages_by_key(context, "last_message_id")
 		await delete_messages_by_key(context, "last_message_ids")
 
 		current_section["query_message"] = None  # если переходим ниже, то query_message вначале должен быть пустым
-		if not leave_messages:  # если разрешаем удалить сообщения после перехода в новый раздел
+		if not keep_messages:  # если разрешаем удалить сообщения после перехода в новый раздел
 			messages = current_section.get("messages", [])
 			await delete_messages_by_key(context, messages)  # удалим все сообщения с экрана на текущем уровне
 
@@ -297,12 +303,13 @@ async def init_start_section(
 ) -> dict:
 	chat_data = context.chat_data
 	chat_data["sections"] = []
-	group = context.user_data["priority_group"].value
-	reply_markup = main_menu[group]
+	group = context.user_data.get("priority_group")
+	menu_index = group.value if group else 3
+	reply_markup = main_menu[menu_index]
 
 	message = await context.bot.send_message(
 		chat_id=chat_data["chat_id"],
-		text=text or '*Выберите интересующий раздел:*',
+		text='*Выберите интересующий раздел:*',
 		reply_markup=reply_markup
 	)
 
@@ -310,29 +317,56 @@ async def init_start_section(
 
 
 async def edit_or_reply_message(
-		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
 		text: str,
-		message_id: int = None,
-		reply_markup: InlineKeyboardMarkup = None
-) -> Message:
-	""" Вывод на экран измененного сообщения или создание нового """
+		message: Union[Message, int, None] = None,
+		delete_before_reply: Union[bool, int] = False,
+		return_message_id: bool = True,
+		message_type: Literal["info", "warn", "error", None] = None,
+		reply_markup: Union[ReplyKeyboardMarkup, InlineKeyboardMarkup, ReplyKeyboardRemove] = None,
+		lifetime: Literal[0, 1, 2, 3, 4, 5] = 0
+) -> Union[Message, int, None]:
+	""" Outputs a modified message or creates a new one """
 
-	if message_id:
+	chat_id = context.chat_data["chat_id"]
+	if message_type:
+		text = MESSAGE_TYPE.get(message_type, "") + " " + text
+
+	if delete_before_reply and isinstance(delete_before_reply, int):
 		try:
-			return await message.get_bot().edit_message_text(
-				text=text,
-				chat_id=message.chat_id,
+			await context.bot.delete_message(chat_id=chat_id, message_id=delete_before_reply)
+		except TelegramError:
+			pass
+
+	if message is not None:
+		message_id = message.message_id if isinstance(message, Message) else message
+		try:
+			if delete_before_reply and isinstance(delete_before_reply, bool):
+				raise TelegramError("Сообщение еще не было создано!")
+
+			message = await context.bot.edit_message_text(
+				chat_id=chat_id,
 				message_id=message_id,
+				text=text,
 				reply_markup=reply_markup
 			)
 
 		except TelegramError:
-			try:
-				await message.get_bot().delete_message(chat_id=message.chat_id, message_id=message_id)
-			except TelegramError:
-				pass
+			if message_id:
+				try:
+					await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+				except TelegramError:
+					pass
+			message = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
-	return await message.reply_text(text=text, reply_markup=reply_markup)
+	else:
+		message = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
+	if lifetime:
+		await sleep(lifetime)
+		await message.delete()
+	else:
+		return message.message_id if return_message_id else message
 
 
 async def delete_messages_by_key(context: ContextTypes.DEFAULT_TYPE, message: Union[Message, List[Message], str, None]):
@@ -442,12 +476,59 @@ def set_priority_group(context: ContextTypes.DEFAULT_TYPE) -> int:
 	return group
 
 
-def build_inline_username_buttons(users: List[dict]) -> InlineKeyboardMarkup:
+async def regenerate_inline_keyboard(
+		message: Message,
+		active_value: str,
+		button_type: Literal["checkbox", "radiobutton", "rate"]
+) -> None:
+	""" Отметка выбранной кнопки инлайн клавиатуры """
+
+	keyboard = message.reply_markup.inline_keyboard
+	inline_markup = update_inline_markup(keyboard, active_value, button_type)
+	await message.edit_reply_markup(inline_markup)
+
+
+async def generate_categories_list(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		groups: Union[list, int] = None,
+		show_all: bool = False,
+		checked_ids: list = None,
+		button_type: Optional[Literal["checkbox", "radiobutton"]] = None
+) -> Optional[InlineKeyboardMarkup]:
+	""" Вспомогательная функция для создания инлайн кнопок с названиями категорий для своей группы """
+
+	# получаем категории для своей группы, учитывая все или только те, которые присвоены пользователям
+	category_list = await load_categories(message, context, exclude_empty=not show_all, groups=groups)
+	if not category_list:
+		return
+
+	callback_data_prefix = "category_" if isinstance(groups, list) else f"group_{groups}__category_"
+	inline_markup = generate_inline_markup(
+		category_list,
+		item_key="name",
+		callback_data="id",
+		callback_data_prefix=callback_data_prefix,
+		cols=1
+	)
+
+	if button_type:  # обновим кнопки для предустановки иконок для отметки
+		callback_data = [callback_data_prefix + str(_id) for _id in checked_ids] if checked_ids else []
+		inline_markup = update_inline_markup(
+			inline_keyboard=inline_markup.inline_keyboard,
+			active_value=callback_data,
+			button_type=button_type
+		)
+
+	return inline_markup
+
+
+def generate_users_list(users: List[dict]) -> InlineKeyboardMarkup:
 	""" Вспомогательная функция для создания инлайн кнопок с именем пользователя и его рейтингом """
 	inline_keyboard = generate_inline_markup(
 		users,
 		callback_data="id",
-		item_key="username",
+		item_key="name",
 		item_prefix=["⭐️", "total_rating"],
 		callback_data_prefix="user_"
 	)
@@ -455,38 +536,200 @@ def build_inline_username_buttons(users: List[dict]) -> InlineKeyboardMarkup:
 	return inline_keyboard
 
 
+async def select_region(
+		context: ContextTypes.DEFAULT_TYPE,
+		region_name: str,
+		geolocation: bool = False,
+		reply_markup: ReplyKeyboardMarkup = None
+) -> Optional[dict]:
+	chat_data = context.chat_data
+	regions = chat_data.get("region_list")
+	if not regions:
+		return
+
+	# получим объект региона по выбранному названию региона
+	found_region, c, _ = fuzzy_compare(region_name, regions, "name", 0.3)
+	if not found_region:
+		text = f'Регион с названием *{region_name}* не найден!\nВведите корректное название региона'
+		chat_data["warn_message_id"] = await edit_or_reply_message(
+			context,
+			text=text,
+			message=chat_data.get("warn_message_id"),
+			message_type="warn",
+			reply_markup=reply_markup
+		)
+		return
+
+	region_name = found_region["name"]
+	# если введенное название региона близко похоже на то что есть в общем перечне, то предложим подтвердить
+	if c < 0.8:
+		chat_data["new_region"] = found_region
+		if geolocation and not chat_data["selected_geolocation"]:
+			title = "Определился регион"
+		else:
+			title = "Вы имели ввиду"
+
+		title += f' *{region_name.upper()}*, все верно?'
+		await confirm_region_message(context, title)  # подтвердим что правильно найден в таблице регион
+		return
+
+	else:
+		# сохраним статус разового использования геолокации
+		if geolocation:
+			chat_data["selected_geolocation"] = True
+
+		return found_region
+
+
+async def confirm_region_callback(
+		update: Update,
+		context: ContextTypes.DEFAULT_TYPE,
+		add_region_func: Callable
+) -> None:
+	""" Колбэк подтверждения автоматически предложенного региона """
+
+	query = update.callback_query
+	await query.answer()
+
+	button_data = query.data.lstrip("choose_region_")
+	geolocation = context.user_data.get("geolocation")
+	chat_data = context.chat_data
+	section = get_section(context) or {}
+
+	if button_data == 'yes':
+		if geolocation:
+			chat_data["selected_geolocation"] = True
+
+		await query.message.delete()
+		if add_region_func:
+			await add_region_func(update, context, chat_data["new_region"])
+
+	elif section:
+		await query.message.delete()
+		await query.message.reply_text("Тогда введите другое название", reply_markup=section.get("reply_markup"))
+
+	else:
+		if geolocation:
+			text = "Хорошо. Тогда введите название самостоятельно"
+			context.user_data["geolocation"].clear()
+		else:
+			text = "Хорошо. Тогда введите другое название"
+		await query.edit_message_text(text)
+
+
+async def select_user_group_callback(
+		update: Update,
+		context: ContextTypes.DEFAULT_TYPE,
+		button_type: Literal["checkbox", "radiobutton", "rate"] = "checkbox"
+):
+	""" Колбэк выбора группы и добавления индекса в глобальный список selected_groups """
+
+	query = update.callback_query
+	await query.answer()
+
+	user_group = int(query.data)
+	local_data = context.chat_data.setdefault("local_data", {})
+	selected_groups = local_data.setdefault("selected_groups", [])
+	if button_type == "checkbox":
+		if user_group in selected_groups:
+			selected_groups.pop(selected_groups.index(user_group))
+		else:
+			selected_groups.append(user_group)
+
+	elif button_type == "radiobutton":
+		local_data["selected_groups"] = [user_group]
+
+	await regenerate_inline_keyboard(query.message, active_value=query.data, button_type=button_type)
+
+
 async def load_categories(
 		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
-		group: Union[int, list] = None,
-		related_users: Union[None, str, int] = "all",
+		exclude_empty: bool = True,
+		cat_id: int = None,
+		groups: Union[int, list] = None,  # by default it means all groups
 ):
-	params = {"group": group}
-	if related_users:
-		params["related_users"] = related_users
-	res = await fetch_data("/categories", params=params)
+	if cat_id:
+		category = context.bot_data.setdefault("categories_dict", {}).get(cat_id)
+		if category:
+			return category
 
+		res = await fetch_data(f'/categories/{cat_id}')
+		if res["error"]:
+			text = f"Ошибка загрузки категории {cat_id}"
+			await send_error_to_admin(message, context, error=res, text=text)
+			await message.reply_text(f'❗️{text}')
+			return None
+
+		context.bot_data["categories_dict"] = list_to_dict(res["data"], "id", *["name", "group"])
+		return res["data"]
+
+	region_ids = []
+	main_region = context.user_data["details"].get("main_region")
+	if main_region:
+		region_ids.append(main_region["id"])
+
+	cat_name = "categories"
+	group = groups[0] if isinstance(groups, list) and len(groups) == 1 else groups
+
+	# важно что именно аргумент 'groups' определяет в какой переменной в chat_data будут храниться категории
+	# type list: в "categories" (там все вместе)
+	# type int : в "designers_cats", "outsourcers_cats", "suppliers_cats"
+	if isinstance(groups, int):
+		if groups >= len(CAT_GROUP_DATA):
+			return
+		group_data = CAT_GROUP_DATA[group]
+		cat_name = group_data["name"] + "_cats"
+
+	categories = context.chat_data.get(cat_name, None)
+
+	# сигнал обязательного обновления категорий для всех пользователей
+	is_outdated_categories = context.bot_data.get("is_outdated_categories", False)
+	if not is_outdated_categories and categories is not None:
+		return categories
+
+	params = {}
+	if groups:
+		params["groups"] = groups
+	if exclude_empty:
+		params["exclude_empty"] = "true"
+		if region_ids:
+			params["regions"] = region_ids
+
+	res = await fetch_data("/categories", params=params)
 	if res["error"]:
 		text = "Ошибка загрузки списка категорий"
-		await catch_server_error(
-			message,
-			context,
-			error=res,
-			text=text,
-			auto_send_notification=False
-		)
+		await send_error_to_admin(message, context, error=res, text=text)
+		await message.reply_text(f'❗️{text}')
+		return None
 
+	context.chat_data[cat_name] = res["data"]  # сохраним данные в памяти
+	context.bot_data["categories_dict"] = list_to_dict(res["data"], "id", *["name", "group"])
 	return res["data"]
 
 
-async def load_cat_users(message: Message, context: ContextTypes.DEFAULT_TYPE, cat_id: str) -> Optional[List[dict]]:
+async def load_cat_users(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		cat_id: str,
+		offset: int = 0,
+		limit: int = 10
+) -> Optional[List[dict]]:
 	if not cat_id:
 		return None
 
-	res = await fetch_user_data(params={"category": cat_id})
+	# TODO: реализовать кэширование и обновление данных по сигналу, сохраняемому в bot_data или chat_data админом
+	params = {"category": cat_id}
+	if offset:
+		params["offset"] = offset
+
+	if limit:
+		params["limit"] = limit
+
+	res = await fetch_user_data(params=params)
 	if res["error"]:
 		text = f'Ошибка получения списка поставщиков!'
-		await catch_server_error(message, context, error=res, text=text, reply_markup=back_menu)
+		await send_error_to_admin(message, context, error=res, text=text)
 		return None
 
 	return res["data"]
@@ -498,7 +741,6 @@ async def load_user(
 		user_id: int,
 		with_details: bool = False,
 ) -> Optional[dict]:
-
 	params = {}
 	if with_details:
 		related_user_id = context.user_data["details"]["id"]
@@ -508,7 +750,7 @@ async def load_user(
 	data = res["data"]
 	if data is None:
 		text = "Ошибка чтения данных пользователя."
-		await catch_server_error(message, context, error=res, text=text)
+		await send_error_to_admin(message, context, error=res, text=text)
 
 	return data
 
@@ -516,18 +758,16 @@ async def load_user(
 async def load_regions(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[list], Optional[list]]:
 	res = await fetch_data("/regions")
 	if not res["data"]:
-		text = "Ошибка загрузки регионов через api"
-		await catch_server_error(
+		text = "Ошибка загрузки списка регионов"
+		await send_error_to_admin(
 			message,
 			context,
 			error=res,
 			text=text,
-			reply_markup=done_menu,
-			auto_send_notification=False
 		)
 		return None, None
 
-	return res["data"], filter_list(res["data"], "in_top", 1)
+	return res["data"], None  # filter_list(res["data"], "in_top", 1)
 
 
 async def load_orders(
@@ -537,7 +777,7 @@ async def load_orders(
 		params: dict = None
 ) -> Union[list, dict, None]:
 	chat_data = context.chat_data
-	orders = chat_data.get("orders", {})
+	orders = chat_data.setdefault("orders", {})
 
 	# попытка найти заказ по id в загруженном ранее списке заказов
 	if order_id and orders:
@@ -550,12 +790,16 @@ async def load_orders(
 
 	if res["error"]:
 		text = f'Ошибка загрузки заказ{"а" if order_id else "ов"}'
-		await catch_server_error(message, context, error=res, text=text)
+		await send_error_to_admin(message, context, error=res, text=text)
 
 	# сохраним в памяти полученные с сервера заказы в виде объектов с ключом order.id
 	elif data:
-		if isinstance(data, list):
-			chat_data["orders"] = {item["id"]: item for item in data}
+		if isinstance(data, dict):
+			_id = data["id"]
+			orders[_id] = data
+
+		elif isinstance(data, list):
+			[orders.update({obj["id"]: obj}) for obj in data]
 
 	return data
 
@@ -567,23 +811,19 @@ async def update_order(
 		params: dict = None,
 		data: dict = None,
 		method: Literal["POST", "DELETE"] = "POST"
-) -> Optional[dict]:
-	res = await fetch_data(
-		f'/orders/{"create" if not order_id and method == "POST" else order_id}',
-		params=params,
-		data=data,
-		method=method
-	)
+) -> tuple:
+	endpoint = f'/orders/{"create" if not order_id and method == "POST" else order_id}'
+	res = await fetch_data(endpoint, params=params, data=data, method=method)
 
-	if res["error"] is not None:
+	if res["error"]:
 		res.setdefault("request_body", data)
 		if order_id:
-			text = f'Ошибка {"обновления" if method == "POST" else "удаления"} заказа (ID:{order_id})!'
+			text = f'Ошибка {"обновления" if method == "POST" else "удаления"} заказа.'
 		else:
-			text = 'Ошибка создания нового заказа!'
+			text = 'Ошибка при создании заказа.'
 
-		await catch_server_error(message, context, error=res, text=text)
-		return None
+		await send_error_to_admin(message, context, error=res, text=text)
+		return None, text
 
 	orders = context.chat_data.setdefault("orders", {})
 	if method == "DELETE":
@@ -592,23 +832,66 @@ async def update_order(
 		_id = res["data"]["id"]
 		orders[_id] = res["data"]  # обновим заказ в сохраненных данных
 
-	return res["data"]
+	return res["data"], None
 
 
-async def load_user_field_names(
-		message: Message,
-		context: ContextTypes.DEFAULT_TYPE,
-		params: dict = None
-) -> Tuple[Optional[list], str]:
-	res = await fetch_data("/user_field_names", params=params or {})
+async def load_user_field_names(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Dict[str, str]:
+	user_field_names = context.bot_data.setdefault("user_field_names", {})
+
+	if user_field_names:
+		return user_field_names
+
+	res = await fetch_data("/user_field_names")
 	if not res["data"]:
 		text = "Ошибка загрузки названий полей пользователя"
-		await catch_server_error(message, context, error=res, text=text)
+		await send_error_to_admin(message, context, error=res, text=text)
+
+	else:
+		context.bot_data["user_field_names"] = res["data"]
 
 	return res["data"]
 
 
-async def load_favourites(message: Message, context: ContextTypes.DEFAULT_TYPE) -> Tuple[List[dict], str]:
+async def load_support_data(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		user_id: str = None,
+		message_id: int = None,
+		params: dict = None
+) -> Union[dict, list, None]:
+	if message_id and user_id:
+		res = await fetch_data(f'/supports/{user_id}/{message_id}', params=params or {})
+		data = res["data"] or {}
+	else:
+		res = await fetch_data(f'/supports/{user_id}', params=params or {})
+		data = res["data"] or []
+
+	if res["error"]:
+		text = "Ошибка загрузки вопросов пользователя"
+		await send_error_to_admin(message, context, error=res, text=text)
+		return None
+
+	return data
+
+
+async def update_support_data(
+		message: Message,
+		context: ContextTypes.DEFAULT_TYPE,
+		user_id: int,
+		message_id: int,
+		data: dict = None
+) -> Optional[dict]:
+	res = await fetch_data(f'/supports/{user_id}/{message_id}', data=data, method="POST")
+
+	if res["error"]:
+		text = "Ошибка сохранения вопроса пользователя"
+		await send_error_to_admin(message, context, error=res, text=text)
+		return None
+
+	return res["data"]
+
+
+async def load_favourites(message: Message, context: ContextTypes.DEFAULT_TYPE) -> tuple:
 	user_details = context.user_data["details"]
 
 	res = await fetch_user_data(user_details["user_id"], '/favourites', method="GET")
@@ -625,7 +908,7 @@ async def update_favourites(
 		context: ContextTypes.DEFAULT_TYPE,
 		user_id: int,
 		method: Literal["POST", "DELETE"] = "POST"
-) -> Tuple[List[dict], str]:
+) -> tuple:
 	user_details = context.user_data["details"]
 
 	res = await fetch_user_data(user_details["user_id"], f'/favourites/{user_id}', method=method)
@@ -638,287 +921,208 @@ async def update_favourites(
 	return res["data"], None
 
 
-async def update_category_list_callback(
-		update: Update,
+async def load_events(
+		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
-		cats_key_name: Literal["categories", "outsourcer_categories"] = "outsourcer_categories"
-) -> None:
-	# Обработчик нажатий на inline кнопки выбора категорий
+		events_type: int,
+		events_date: str = None,
+		group: int = None,
+) -> Union[Dict[str, List[dict]], List[dict]]:
+	""" Загрузка событий за год или выбранный месяц для группы: 0 или 1 """
+
+	# TODO: доделать проверку прошедших месяцев и удалять их из events. После чего надо обновить данные по api
+	if events_type == 2:
+		events = context.bot_data.setdefault("world_events", {})
+	elif events_type == 1:
+		events = context.bot_data.setdefault("country_events", {})
+	else:
+		events = context.chat_data.setdefault("region_events", {})
+
+	# попытка найти событие по месяцу в загруженном ранее списке событий
+	data = events.get(events_date)
+	if data:
+		return data
+
+	params = {"events_type": events_type}
+	if group is not None:
+		params["group"] = group
+
+	if events_date:
+		params["month"], params["year"] = events_date.split(".")
+
+	res = await fetch_data(f'/events', params=params)
+	if res["error"]:
+		text = f'Ошибка получения событий за {"месяц" if events_date else "12 мес"} для группы {group}'
+		await send_error_to_admin(message, context, error=res, text=text)
+
+	if res["data"]:
+		grouped_events = group_objects_by_date(res["data"], date_field_name="start_date", date_format='%m.%Y')
+		events.update(grouped_events)
+
+	if events_date:
+		return events.get(events_date, [])
+
+	return events
+
+
+async def post_user_log_data(context: ContextTypes.DEFAULT_TYPE, status_code: int, message, error_code: int = None):
+	""" Сохранение записи в лог таблицу """
+	user_id = context.bot.id
+	data = {"user_id": str(user_id), "status": status_code, "message": message, "error_code": error_code}
+	await fetch_data("/logs", data=data, method="POST")
+
+
+async def select_user_categories_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+	""" Колбэк выбора нажатой inline кнопки для списка категорий """
+
 	query = update.callback_query
-
 	await query.answer()
-	cat_id = query.data.lstrip("category_")
 
-	categories = context.chat_data.get(cats_key_name, [])
+	query_data = query.data.split("__")
+	cat_id = int(query_data[-1].lstrip("category_"))
+	group = None
+	if len(query_data) > 1:
+		group = int(query_data[0].lstrip("group_"))
+
+	categories = await load_categories(query.message, context, groups=group)
+	if not categories:
+		return
+
+	selected_cat = find_obj_in_dict(categories, {"id": cat_id})
+	if not selected_cat:
+		return
+
 	local_data = context.chat_data.setdefault("local_data", {})
 	selected_categories = local_data.setdefault("selected_categories", {})
 
-	await delete_messages_by_key(context, "warn_message_id")
-
 	# Добавим или удалим найденную категорию
-	active_category, _ = find_obj_in_list(categories, {"id": int(cat_id)})
-	if not active_category:
-		return
-
 	if selected_categories.get(cat_id):
 		del selected_categories[cat_id]
 	else:
 		selected_categories[cat_id] = {
-			"name": active_category["name"],
-			"group": active_category["group"]
+			"name": selected_cat["name"],
+			"group": selected_cat["group"]
 		}
 
-	keyboard = query.message.reply_markup.inline_keyboard
-	updated_keyboard = update_inline_keyboard(keyboard, active_value=query.data, button_type="checkbox")
-	await query.edit_message_reply_markup(updated_keyboard)
+	await regenerate_inline_keyboard(query.message, active_value=query.data, button_type="checkbox")
 
 
-async def select_supplier_segment(message: Message, context: ContextTypes.DEFAULT_TYPE, user: dict) -> None:
+async def select_supplier_segment(context: ContextTypes.DEFAULT_TYPE, user: dict) -> None:
 	""" Функция вывода сообщения с предложением выставить сегмент поставщика """
 
 	temp_messages = context.chat_data.setdefault("temp_messages", {})
 
 	# если выбранный поставщик еще лично не зарегистрирован в боте и не имеет ранее выбранного кем-то сегмента
-	if not Group.has_role(user, Group.SUPPLIER) or user["user_id"] or not user["segment"] is None:
+	if not Group.has_role(user, Group.SUPPLIER) or user.get("user_id") or user.get("segment", None) is not None:
 		return
 
 	inline_markup = generate_inline_markup(
 		SEGMENT_KEYBOARD,
 		callback_data_prefix=f'user_{user["id"]}__segment_',
-		vertical=True
+		cols=1
 	)
 
-	_message = await message.reply_text(
+	temp_messages["user_segment"] = await edit_or_reply_message(
+		context,
 		f'🎯 *Сегмент еще не установлен!*\n'
 		f'Подскажите, если работали с этим поставщиком.',
 		reply_markup=inline_markup
 	)
-	temp_messages["user_segment"] = _message.message_id
 
 
-def order_has_approved_executor(order: dict) -> bool:
-	""" Вернет истина, если претендент отсутствует в списке откликнувшихся на заказ responded_users """
-	if not order["executor"]:
-		return False
+async def trade_dialog_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+	# если сообщение касается вопроса покупки/продажи
+	await update.message.delete()
+	section = get_section(context)
+	last_message_ids = context.chat_data.setdefault("last_message_ids", {})
+	trade_url = await context.bot.export_chat_invite_link(chat_id=TRADE_GROUP_ID)
+	sandbox_url = await context.bot.export_chat_invite_link(chat_id=SANDBOX_GROUP_ID)
 
-	responded_user, _ = find_obj_in_list(order["responded_users"], {"id": order["executor"]})
-	return not bool(responded_user)
+	trade_link = format_output_link(trade_url, "Дизайн Консьерж " + CHAT_GROUPS_DATA[TRADE_GROUP_ID])
+	sandbox_link = format_output_link(sandbox_url, "Дизайн Консьерж " + CHAT_GROUPS_DATA[SANDBOX_GROUP_ID])
 
+	last_message_ids["trade_message"] = await edit_or_reply_message(
+		context,
+		f'Если желаете что-то купить, продать или отдать, то переходите в группу {trade_link}\n'
+		f'Для других целей есть своя группа {sandbox_link}',
+		message=last_message_ids.get("trade_message"),
+		message_type="info",
+		reply_markup=section["reply_markup"]
+	)
 
-def get_order_status(order: dict) -> Tuple[str, str]:
-	"""
-	Получение статуса заказа в виде строки
-	Returns:
-		Tuple (статус, дата выполнения заказа)
-	"""
-	date_string, expire_date, current_date = get_formatted_date(order["expire_date"])
-	is_valid = not expire_date or current_date <= expire_date
-
-	if order["status"] == 0:
-		order_status = ORDER_STATUS[0]
-	elif order["status"] == 1:
-		if not is_valid:
-			order_status = ORDER_STATUS[4]
-		elif order["executor"]:
-			order_status = ORDER_STATUS[int(order_has_approved_executor(order) + 2)]
-		else:
-			order_status = ORDER_STATUS[1]
-	elif order["status"] == 2:
-		order_status = ORDER_STATUS[5]
-	elif order["status"] == 3:
-		order_status = ORDER_STATUS[6]
-	else:
-		order_status = ORDER_STATUS[7]
-
-	return order_status, date_string
+	return section["state"]
 
 
-async def show_user_orders(
-		message: Message,
-		orders: list,
-		user_role: Literal["creator", "contender", "executor"],
-		user_id: int = None,
-		title: str = None,
-		reply_markup: ReplyKeyboardMarkup = back_menu
-) -> list:
-	""" Вывод на экран списка заказов пользователя по его id:
-		Args:
-			message: объект с сообщением,
-			orders: заказы дизайнера,
-			user_role: флаг указывающий на текущую роль пользователя,
-			user_id: id текущего пользователя,
-			title: заголовок для сообщений,
-			reply_markup: клавиатура для reply message.
-		Returns:
-			массив Message сообщений
-	 """
-
-	messages = []
-	callback_prefix = "order_"
-
-	if title:
-		reply_message = await message.reply_text(f'*{title.upper()}*\n', reply_markup=reply_markup)
-		messages.append(reply_message)
-
-	if not orders:
-		message_text = NO_ORDERS_MESSAGE_TEXT.get(user_role, "❕Пока пусто.")
-		reply_message = await message.reply_text(message_text, reply_markup=reply_markup)
-		messages.append(reply_message)
-
-		if user_role == "creator":
-			inline_message = await place_new_order_message(message)
-			messages.append(inline_message)
-
-		return messages
-
-	elif not user_role:
-		return messages
-
-	for index, order in enumerate(orders, 1):
-		order_has_executor = order_has_approved_executor(order)
-		responded_user_counter = ""
-		order_button_text = ORDER_RESPOND_KEYBOARD[3]
-
-		if user_role == "creator":
-			order_button_text = ORDER_RESPOND_KEYBOARD[4]
-			if order["status"] == 2:
-				order_button_text = ORDER_RESPOND_KEYBOARD[5]
-
-			if order["status"] < 2 and order["responded_users"] and not order_has_executor:
-				responded_user_counter = f' ({len(order["responded_users"])})'
-
-		elif order["executor"] == user_id and not order_has_executor:
-			order_button_text = ORDER_RESPOND_KEYBOARD[2]
-
-		inline_markup = generate_inline_markup(
-			[order_button_text + responded_user_counter],
-			callback_data=[order["id"]],
-			callback_data_prefix=callback_prefix
-		)
-
-		inline_message_text = format_output_text(f'{index}', order["title"] + "\n", value_tag="`", default_sep=".")
-
-		order_status, date_string = get_order_status(order)
-		if not user_role == "creator":
-			order_status = ""
-			inline_message_text += f'\nЗаказчик: _{order["owner_name"]}_'
-
-		if order_has_executor and order["executor"] != user_id:
-			executor = order.get("executor_name")
-			if executor:
-				inline_message_text += f'\nИсполнитель: _{executor}_'
-
-		order_price = f'{order["price"]}₽' if order["price"] else "по договоренности"
-		inline_message_text += f'\nСтоимость работ: _{order_price}_'
-
-		if date_string:
-			inline_message_text += f'\nСрок реализации: _{date_string}_'
-
-		if order_status:
-			inline_message_text += f'\nСтатус: _{order_status}_'
-
-		if user_role == "contender" and order["responded_users"] and not order["executor"] == user_id:
-			inline_message_text += f'\nОткликнулось на заявку: _{len(order["responded_users"]) or "0"}_'
-
-		inline_message = await message.reply_text(inline_message_text, reply_markup=inline_markup)
-		messages.append(inline_message)
-
-	if user_role == "creator":
-		inline_message = await place_new_order_message(message)
-		messages.append(inline_message)
-
-	return messages
-
-
-async def show_order_related_users(message: Message, context: ContextTypes.DEFAULT_TYPE, order: dict) -> List[Message]:
-	""" Вывод данных претендентов на заказ или исполнителя с inline кнопками управления """
-
-	executor_id = order["executor"]
-	users = order["responded_users"]
-
-	if not executor_id and not users:
-		return []
-
-	order_has_executor = order_has_approved_executor(order)
-	selected_postfix = ""
-	inline_messages = []
-
-	# если пользователь был выбран дизайнером
-	if executor_id:
-		if order_has_executor:  # если подтвержденный исполнитель
-			executor = await load_user(message, context, user_id=executor_id)
-			if executor:
-				users = [executor]
-
-		else:
-			selected_postfix = "__is_selected"
-
-	# изменим заголовок списка претендентов или исполнителя
-	_message = await message.reply_text(f'_{ORDER_RELATED_USERS_TITLE[int(order_has_executor)]}:_')
-	inline_messages.append(_message)
-
-	for user in users:
-		buttons = [InlineKeyboardButton(ORDER_EXECUTOR_KEYBOARD[0], callback_data=f'user_{user["id"]}')]
-		if order["status"] == 1 and not order_has_executor:
-			user_is_contender = user["id"] == executor_id
-			if not executor_id or user_is_contender:
-				buttons.append(InlineKeyboardButton(
-					ORDER_EXECUTOR_KEYBOARD[int(user_is_contender) + 1],
-					callback_data=f'order_{order["id"]}__executor_{user["id"]}{selected_postfix}'
-				))
-
-		_message = await message.reply_text(
-			f'*{user["name"]}*'
-			f'{format_output_text("рейтинг", "⭐️" + str(user["total_rating"]) if user["total_rating"] else "отсутствует")}',
-			reply_markup=InlineKeyboardMarkup([buttons])
-		)
-		inline_messages.append(_message)
-
-	return inline_messages
-
-
-async def is_user_chat_member(bot: Bot, user_id: int, chat_id: Union[str, int]) -> bool:
+async def is_user_chat_member(bot: Bot, user_id: int, chat_id: int) -> bool:
 	""" Проверка наличия пользователя в группе или канале """
 	try:
-		member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-		return bool(member)
+		chat = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+		if chat.status not in [ChatMember.LEFT, ChatMember.BANNED]:
+			return True
 	except TelegramError:
-		return False
+		pass
+
+	return False
 
 
 async def invite_user_to_chat(
 		update: Union[Update, CallbackQuery],
 		user_id: int,
-		chat_id: Union[str, int],
+		chat_id: int,
 		text: str = None,
-		is_group_chat: bool = False,
-) -> bool:
+		chat_is_channel: bool = True,
+		chat_name: str = ""
+) -> Optional[Message]:
 	""" Добавляем пользователя в чат (канал/группа) """
 
-	chat_variants = ["каналу", "группе"]
-	chat_variant_text = chat_variants[int(is_group_chat)]
 	bot = update.get_bot()
+	chat_variants = ["нашей группе", "нашему каналу"]
+	subtext = " " + chat_variants[int(chat_is_channel)]
+	join_link = await bot.export_chat_invite_link(chat_id=chat_id)
+	join_group_text = f'🫂 Вы присоединены к{subtext} *{chat_name}*!'
+	inline_markup = generate_inline_markup(["Перейти в группу"], url=join_link)
+
+	# Проверяем принадлежность пользователя к чату
+	is_member = await is_user_chat_member(bot, user_id=user_id, chat_id=chat_id)
+	if is_member:
+		return await update.message.reply_text(join_group_text, reply_markup=inline_markup)
 
 	try:
-		await bot.approve_chat_join_request(user_id=user_id, chat_id=chat_id)
+		is_joined = await bot.approve_chat_join_request(user_id=user_id, chat_id=chat_id)
+		if is_joined:
+			return await update.message.reply_text(join_group_text, reply_markup=inline_markup)
 
 	except TelegramError:
 		pass
 
-	# Проверяем принадлежность пользователя к чату
-	is_member = await is_user_chat_member(bot, user_id, chat_id=chat_id)
-	if not is_member:
-		join_link = await bot.export_chat_invite_link(chat_id=chat_id)
-		join_button = generate_inline_markup(
-			[f'Присоединиться к {chat_variant_text}'],
-			url=join_link,
-		)
-		await update.message.reply_text(
-			text=text or "Присоединяйтесь к нашему каналу Консьерж для Дизайнера",
-			reply_markup=join_button
-		)
+	return await join_chat_message(update.message, join_link, text, subtext, chat_name)
 
-	return is_member
+
+async def show_chat_group_links(
+		update: Update,
+		context: ContextTypes.DEFAULT_TYPE,
+		group_id: int = None,
+		hide_joined_groups: bool = True
+) -> None:
+	user_id = context.user_data["details"]["user_id"]
+	last_message_ids = context.chat_data.setdefault("last_message_ids", {})
+
+	chat_groups = {group_id: CHAT_GROUPS_DATA.get(group_id)} if group_id else CHAT_GROUPS_DATA
+
+	for chat_id, chat_name in chat_groups.items():
+		if not group_id and hide_joined_groups and await is_user_chat_member(context.bot, user_id, chat_id):
+			continue
+		else:
+			message = await invite_user_to_chat(
+				update,
+				user_id=user_id,
+				chat_id=chat_id,
+				chat_is_channel=False,
+				chat_name=chat_name
+			)
+
+			if message:
+				last_message_ids[str(chat_id)] = message.message_id
 
 
 async def create_start_link(message: Message, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -963,7 +1167,7 @@ async def create_questionnaire_link(message: Message, context: ContextTypes.DEFA
 	return url
 
 
-async def catch_server_error(
+async def catch_critical_error(
 		message: Message,
 		context: ContextTypes.DEFAULT_TYPE,
 		error: dict,
@@ -972,36 +1176,95 @@ async def catch_server_error(
 		auto_send_notification: bool = True,
 ) -> Message:
 	user = message.chat
+	user_name = context.user_data.get("details", {}).get("name") or user.full_name
 	error_data = {
-		"error_text": error.get("error", "Неизвестная ошибка"),
-		"error_code": error.get("status_code", "unknown"),
+		"error": error.get("error", "Неизвестная ошибка"),
+		"status_code": error.get("status_code", "unknown"),
 		"url": error.get("url", ""),
 		"body": error.get("request_body", {})
 	}
 
-	log.info('User {} got server error {} on request {}: "{}"'.format(
-		user.id, error_data["error_code"], error_data["url"], error_data["error_text"]
+	log.error('User {} (ID:{}) got server error {} on request {}: "{}"'.format(
+		user_name, user.id, error_data["status_code"], error_data["url"], error_data["error"]
 	))
 
-	error_title = text or f'{error_data["error_code"]}: {error_data["error_text"]}\n'
+	error_title = text or f'{error_data["status_code"]}: {error_data["error"]}\n'
+	await post_user_log_data(context, status_code=0, message=error_data["error"], error_code=error_data["status_code"])
+
 	if auto_send_notification:
 		await send_error_to_admin(message, context, error=error_data, text=error_title)
-		error_text = "Администратор уже проинформирован о Вашей проблеме.\nПопробуйте повторить или зайдите позже."
-		markup = generate_inline_markup(["Отправить"], callback_data="send_error")
+		error_text = "Сообщение об ошибке отправлено в техподержку.\nПопробуйте повторить позже"
+		markup = reply_markup
 
 	else:
-		error_text = "Просьба поделиться проблемой с администратором Консьерж Сервис."
-		markup = reply_markup
+		context.chat_data["last_error"] = {"text": error.get("error"), "code": error.get("status_code")}
+		error_text = "Опишите более подробно ситуацию при которой возникла ошибка " \
+		             "и/или нажмите *Отправить* уведомление в техподдержку"
+		markup = generate_inline_markup(["Отправить"], callback_data="send_error")
 
 	reply_message = await message.reply_text(
 		f'Что-то пошло нет так!\n'
 		f'*{error_title}*\n\n'
-		f'{error_text}.\n\n'
+		f'{error_text}.\n'
 		f'Приносим свои извинения, {user.first_name}',
 		reply_markup=markup
 	)
 
 	return reply_message
+
+
+async def send_message_to(
+		context: ContextTypes.DEFAULT_TYPE,
+		user_id: Union[int, str, List[int]],
+		text: str,
+		from_name: str,
+		from_username: str = None,
+		reply_to_message_id: int = None,
+		reply_markup: InlineKeyboardMarkup = None
+) -> None:
+	"""
+    Функция для отправки уведомлений пользователям.
+    :param context: Контекст выполнения функции.
+    :param user_id: Идентификатор или список идентификаторов пользователей.
+    :param text: Текст уведомления.
+    :param from_name: Имя отправителя уведомления.
+    :param from_username: Имя пользователя в Телеграм (необязательный параметр).
+    :param reply_to_message_id: id сообщения на которое отвечают
+    :param reply_markup: Инлайн клавиатура
+    :return: None
+    """
+	if not user_id and not text:
+		return
+
+	if not isinstance(user_id, list):
+		user_ids = [user_id]
+
+	else:
+		user_ids = user_id
+
+	for _id in user_ids:
+		if isinstance(_id, int):
+			res = await fetch_user_data(_id)
+			data = res["data"]
+			if data and data["user_id"]:
+				user_id = data["user_id"]
+			else:
+				break
+		else:
+			user_id = _id
+
+		if from_username and not reply_to_message_id:
+			text = f" (@{from_username})\n{text}"
+		else:
+			text = f"\n{text}"
+
+		await context.bot.send_message(
+			chat_id=user_id,
+			text=f'📨 *{"Ответ" if reply_to_message_id else "Пришло сообщение"}*'
+			     f'* от {from_name}*{text}',
+			reply_to_message_id=reply_to_message_id,
+			reply_markup=reply_markup
+		)
 
 
 async def send_error_to_admin(
@@ -1013,16 +1276,17 @@ async def send_error_to_admin(
 	user = message.from_user
 	user_details = context.user_data.get('details', {
 		'user_id': user.id,
-		'username': user.username,
 		'name': user.full_name,
+		'username': user.username,
 	})
 
 	chat_data = context.chat_data
+	chat_data["last_error"] = {"text": error.get("error"), "code": error.get("status_code")}
 	section = get_section(context)
 	error_data = {
-		"chat_id": chat_data["chat_id"],
-		"bot_status": chat_data["status"],
-		"state": section["state"],
+		"chat_id": chat_data.get("chat_id"),
+		"bot_status": chat_data.get("status"),
+		"state": section.get("state"),
 		"query_message": section.get("query_message", None),
 		"callback": section.get("callback", None),
 	}
@@ -1041,23 +1305,24 @@ async def send_error_to_admin(
 	# TODO: Добавить функционал для логирования ошибок на сервере
 	await context.bot.send_message(
 		chat_id=ADMIN_CHAT_ID,
-		text=f'*Сообщение для администратора!*\n\n'
+		text=f'📥 *Сообщение для администратора!*\n\n'
 		     f'_{title_text}_\n'
 		     f'`\n{error_text}`\n\n'
-		     f'*User info:*\n'
+		     f'*Данные чата:*\n'
 		     f'`\n{user_text}`\n'
 	)
 
 
 async def send_error_message_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	# TODO: Необходимо протестировать!!!
-	query = update.callback_query
 
+	query = update.callback_query
 	await query.answer()
+
 	chat_data = context.chat_data
-	error_code = str(chat_data["status_code"])
 	error_message = {
-		error_code: chat_data.get("error", "unknown"),
+		"error": chat_data.get("error", "unknown"),
+		"status_code": chat_data.get("status_code", "unknown"),
 		"url": chat_data.get("api_url", "unknown"),
 	}
 
@@ -1070,3 +1335,18 @@ async def send_error_message_callback(update: Update, context: ContextTypes.DEFA
 	             f"Сообщение уже отправлено администратору Консьерж Сервис\n" \
 	             f"Приносим свои извинения за предоставленные неудобства."
 	await context.bot.send_message(chat_id=user_chat_id, text=error_text)
+
+
+async def message_for_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	query = update.callback_query
+	if query:
+		await query.answer()
+	else:
+		query = update
+
+	state = MenuState.SUPPORT
+
+	message = await query.message.reply_text("О чем Вы хотели сообщить нам?")
+	context.chat_data["last_message_id"] = message.message_id
+
+	return state
