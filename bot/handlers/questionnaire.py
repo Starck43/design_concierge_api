@@ -3,7 +3,6 @@ from typing import Optional, Union
 from telegram import Update, CallbackQuery
 from telegram.ext import ContextTypes
 
-from bot.constants.static import MAX_RATE
 from bot.constants.menus import continue_menu
 from bot.constants.messages import (
 	offer_to_cancel_action_message, failed_questionnaire_message, empty_questionnaire_list_message,
@@ -14,7 +13,7 @@ from bot.handlers.common import (
 	post_user_log_data
 )
 from bot.handlers.rating import validate_rated_user, update_ratings, show_user_rating_questions
-from bot.logger import log
+from logger import log
 from bot.states.questionnaire import QuestState
 from bot.utils import (
 	find_obj_in_list, generate_inline_markup, remove_duplicates, format_output_text, extract_fields

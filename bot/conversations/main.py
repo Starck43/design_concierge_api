@@ -1,4 +1,3 @@
-import locale
 import re
 from datetime import datetime
 from functools import partial
@@ -12,7 +11,7 @@ from telegram.ext import (
 from telegram.warnings import PTBUserWarning
 
 from bot.bot_settings import CHANNEL_ID
-from bot.constants.menus import start_menu, done_menu
+from bot.constants.menus import done_menu
 from bot.constants.messages import denied_access_message, share_files_message, offer_questionnaire_message
 from bot.constants.patterns import (
 	START_PATTERN, DONE_PATTERN, BACK_PATTERN, PROFILE_PATTERN, COOPERATION_REQUESTS_PATTERN, USERS_SEARCH_PATTERN,
@@ -52,7 +51,7 @@ from bot.handlers.upload import prepare_shared_files, upload_files_callback, sha
 from bot.handlers.user import (
 	recommend_user_choice, recommend_new_user_callback, select_user_segment_callback, confirm_user_region_callback
 )
-from bot.logger import log
+from logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import determine_greeting

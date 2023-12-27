@@ -20,7 +20,7 @@ from bot.handlers.registration import (
 	choose_segment_callback, choose_user_name_callback, approve_verification_code_callback,
 	repeat_input_phone_callback, interrupt_registration_callback
 )
-from bot.logger import log
+from logger import log
 from bot.states.registration import RegState
 from bot.utils import fetch_user_data
 

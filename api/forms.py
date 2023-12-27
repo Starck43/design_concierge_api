@@ -1,6 +1,6 @@
 from django import forms
 
-from api.models import User, Category
+from api.models import User
 
 
 class UserForm(forms.ModelForm):

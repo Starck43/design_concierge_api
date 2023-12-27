@@ -1,16 +1,14 @@
 import itertools
-from collections import OrderedDict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from functools import cached_property
 
 import requests
 from django.core import exceptions
 from django.core.files.base import ContentFile
 from django.db import models
-from django.db.models import Q, ManyToOneRel, ManyToManyRel, OneToOneRel, F, Count, Field, Max
+from django.db.models import Q, F, Count, Field, Max
 from django.utils import timezone
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
+from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import (
 	get_object_or_404, ListAPIView, RetrieveUpdateDestroyAPIView, RetrieveAPIView, ListCreateAPIView
@@ -18,9 +16,7 @@ from rest_framework.generics import (
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Category, User, Rating, Region, File, Order, Favourite, Group, Support, Message, Log, UserGroup, \
-	Event
-from bot.utils import convert_date
+from api.models import Category, User, Rating, Region, File, Order, Favourite, Support, Message, Log, Event
 from .logic import get_date_range
 from .parser import load_events
 from .serializers import (

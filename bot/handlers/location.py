@@ -5,7 +5,7 @@ from telegram.ext import CallbackContext
 
 from bot.handlers.common import post_user_log_data
 from bot.handlers.registration import update_location_in_reg_data
-from bot.logger import log
+from logger import log
 from bot.utils import fetch_location
 
 

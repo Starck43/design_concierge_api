@@ -17,11 +17,11 @@ from bot.constants.messages import (
 )
 from bot.constants.patterns import DONE_PATTERN, CONTINUE_PATTERN
 from bot.handlers.common import (
-	send_error_to_admin, delete_messages_by_key, catch_critical_error, create_registration_link,
+	delete_messages_by_key, catch_critical_error, create_registration_link,
 	edit_or_reply_message, load_categories, set_priority_group, invite_user_to_chat, generate_categories_list,
 	select_region, post_user_log_data
 )
-from bot.logger import log
+from logger import log
 from bot.sms import SMSTransport
 from bot.states.group import Group
 from bot.states.registration import RegState

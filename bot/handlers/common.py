@@ -10,15 +10,15 @@ from telegram.ext import ContextTypes
 
 from bot.bot_settings import ADMIN_CHAT_ID, TRADE_GROUP_ID, SANDBOX_GROUP_ID
 from bot.constants.keyboards import BACK_KEYBOARD, SEGMENT_KEYBOARD
-from bot.constants.menus import main_menu, done_menu
+from bot.constants.menus import main_menu
 from bot.constants.messages import (
 	offer_for_registration_message, share_link_message, send_unknown_question_message, confirm_region_message,
 	join_chat_message
 )
-from bot.constants.patterns import BACK_PATTERN, BACK_TO_TOP_PATTERN, SUPPORT_PATTERN, CANCEL_PATTERN, TRADE_PATTERN
+from bot.constants.patterns import BACK_PATTERN, BACK_TO_TOP_PATTERN, SUPPORT_PATTERN, CANCEL_PATTERN
 from bot.constants.static import MESSAGE_TYPE, CAT_GROUP_DATA, CHAT_GROUPS_DATA
 from bot.entities import TGMessage
-from bot.logger import log
+from logger import log
 from bot.states.group import Group
 from bot.states.main import MenuState
 from bot.utils import (

@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from rest_framework.relations import PrimaryKeyRelatedField
 
-from .models import Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rating, Feedback, Order, \
-	Support, Log, Event
+from .models import (
+	Category, User, UserGroup, Designer, Outsourcer, Supplier, Favourite, Rating, Feedback, Order, Support, Log, Event
+)
 from .models import Region, Country
 
 

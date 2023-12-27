@@ -2,7 +2,7 @@ from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 
 from bot.handlers.common import delete_messages_by_key, edit_or_reply_message, post_user_log_data
-from bot.logger import log
+from logger import log
 
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

@@ -10,7 +10,7 @@ import zlib
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Создаем папку "logs" в корневой директории проекта, если ее еще нет
-LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+LOGS_DIR = os.path.join(BASE_DIR, 'designer_concierge/logs')
 Path(LOGS_DIR).mkdir(parents=True, exist_ok=True)
 LOGS_DIR = os.path.abspath(LOGS_DIR)
 

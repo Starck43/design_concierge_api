@@ -1,5 +1,5 @@
+from datetime import date, timedelta
 from typing import Tuple
-from datetime import date, datetime, timedelta
 
 from django.core.files.storage import FileSystemStorage
 

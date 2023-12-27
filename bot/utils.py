@@ -17,7 +17,7 @@ from telegram.ext import CommandHandler, filters, CallbackContext
 from bot.bot_settings import SERVER_URL
 from bot.constants.api import OPENSTREETMAP_GEOCODE_URL
 from bot.constants.static import RATE_BUTTONS
-from bot.logger import log
+from logger import log
 
 
 def command_handler(app, command, handler_filters=filters.COMMAND):

@@ -2,7 +2,7 @@ import re
 from os import getenv
 import dataclasses
 
-from bot.logger import log
+from logger import log
 from bot.utils import fetch
 
 

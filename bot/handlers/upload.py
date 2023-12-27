@@ -1,12 +1,12 @@
-from typing import Union, Optional
+from typing import Optional
 
-from telegram import Update, InputMediaPhoto, InputMediaDocument, ReplyKeyboardMarkup, InlineKeyboardMarkup
+from telegram import Update, InputMediaPhoto, InputMediaDocument, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from bot.bot_settings import ADMIN_CHAT_ID
 from bot.constants.messages import check_file_size_message
 from bot.handlers.common import get_section, post_user_log_data
-from bot.logger import log
+from logger import log
 from bot.states.main import MenuState
 from bot.utils import generate_inline_markup, fetch_user_data
 

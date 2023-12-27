@@ -1,4 +1,4 @@
-categories_list = [
+CATEGORIES = [
 	{"id": 0, "name": "Мягкая мебель", "group": 2},
 	{"id": 1, "name": "Кухни/корпусная мебель", "group": 2},
 	{"id": 2, "name": "Стулья", "group": 2},
@@ -30,7 +30,7 @@ categories_list = [
 	{"id": 28, "name": "Фотограф", "group": 1},
 ]
 
-users_list = [
+USERS = [
 	{'id': 0, 'category': 15, 'name': 'AleksaFlex', 'address': 'Пролетарская, 14'},
 	{'id': 1, 'category': 15, 'name': 'Divanger', 'address': 'Ленина, 205'},
 	{'id': 2, 'category': 15, 'name': 'Dom Design', 'address': 'Спасская, 17'},

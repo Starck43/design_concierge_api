@@ -9,7 +9,7 @@ from datetime import datetime, date
 
 from api.models import Event, UserGroup
 
-from bot.logger import log
+from logger import log
 
 
 def load_config(filename: str):
@@ -45,11 +45,10 @@ def get_params_for_group(config: List[dict], group: int, date_from: str = None, 
 	return params
 
 
-def format_date(date: Union[str, datetime], date_format: str):
-	if not date or not date_format:
+def format_date(date_obj: Union[str, datetime], date_format: str):
+	if not date_obj or not date_format:
 		return None
 
-	date_obj = date
 	if isinstance(date_obj, str):
 		date_obj = datetime.strptime(date_obj, "%d.%m.%Y")
 	return date_obj.strftime(date_format).lower()

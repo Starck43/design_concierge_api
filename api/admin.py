@@ -1,7 +1,7 @@
 from django.contrib import admin
 
-from bot.constants.data import categories_list, users_list
-from bot.constants.regions import ALL_REGIONS
+from .data import CATEGORIES, USERS
+from .regions import ALL_REGIONS
 from .forms import UserForm
 
 from .models import (
@@ -94,7 +94,7 @@ class CategoryAdmin(admin.ModelAdmin):
 	actions = ['import_categories']
 
 	def import_categories(self, request, queryset):
-		for data in categories_list:
+		for data in CATEGORIES:
 			if data["id"] >= 0:
 				group_code = data['group']
 				user_group = UserGroup.objects.get(code=group_code)
@@ -134,7 +134,7 @@ class UserAdmin(admin.ModelAdmin):
 	update_ratings.short_description = "Обновить общий рейтинг у выбранных записей"
 
 	def import_users(self, request, queryset):
-		for data in users_list:
+		for data in USERS:
 			try:
 				User.objects.get(id=data['id'])
 				continue
