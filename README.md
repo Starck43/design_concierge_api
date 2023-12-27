@@ -1,111 +1,46 @@
-# designer concierge
-Чат бот телеграм для дизайнеров
+# design concierge api
+API для чат бота телеграм
 
-## Хранилище данных в телеграм (context)
+## endpoints
 
-### user_data:
-    Контекст персональных данных пользователя, загружаемый при необходимости с сервера
+- regions/ (GET) - получение всех регионов
+- regions/{id} (GET) - получение региона с id
 
-### chat_data:
-    Контекст данных, имеющий отношение к чату, 
-    включая его статус, состояние диалога, сообщений, клавиатуры, геопозиция и др.
+- categories/ (GET) - получение всех категорий
+- categories/<id>/ (GET) - получение категории с id
+- categories/?group={0,1,2} (GET) - получение всех категорий для групп 0, 1, 2
+- categories/?related_users={all} (GET) - получение всех категорий для связанных пользователей
+- categories/?region={region.id} (GET) - получение всех категорий для id региона
 
-- `sections`
-массив сохраненных состояний раздела
-```json lines
-[{
-    "state": <MenuState>, // type Enum
-    "query_message": <Message.text>, // type str
-    "messages": [<TGMessage>], // type list
-    "reply_markup": <Message.reply_markup>, // type ReplyKeyboardMarkup
-    "callback": <Callback>, // type Callback
-    "save_full_messages": <Boolean>, // type bool
-}]
-```
-
-- `categories`
-список, хранящий выбранные категории при регистрации или при анкетировании.
-
-
-- `user_role`
-Хранится роль текущего пользователя при работе на Бирже услуг (creator, contender, executor)
+- users/ (GET) - получение всех пользователей
+- users/?offset=0&limit=10 (GET) - получение ограниченного количества пользователей со смещением в таблице
+- users/?category={id} (GET) - получение всех пользователей для категории с id
+- users/?group={0,1,2} (GET) - получение всех пользователей из группы 0, 1, 2
+- users/?id={id} (GET) - получение пользователя по id (более короткий ответ)
+- users/?user_id={user_id} (GET) - получение пользователя по user_id telegram (более короткий ответ)
+- users/?user_id={user_id}&is_rated=true (GET) - получение пользователя по user_id telegram
+- с добавлением поля is_rated в ответе, обозначающим, что у пользователя есть хотя бы один рейтинг
+- users/create/ (POST) - регистрация нового пользователя
+- users/<user_id>/update_ratings/ (POST, PATCH) - обновление или частичное обновление рейтинга от пользователя с user_id
+- users/<user_id>/favourites/ (GET) - получение списка избранного для дизайнера по его user_id
+- users/<user_id>/favourites/<int:supplier_id>/ (GET, POST, DELETE) - получение избранного, добавление и удаление
+- users/<id>/ (GET, PUT, PATCH) - получение, обновление или частичное обновление данных пользователя с id
+- users/<id>/?related_user={author_id}/ (GET) - получение пользователя с добавлением данных рейтинга от author_id
+- users/<user_id>/upload/ (POST) - отправка url файлов на сервер для пользователя с user_id
 
 
-- `selected_cat`
-объект с данными для текущей категории {id, name, group}
+- orders/ (GET, POST) - получение списка заказов и создание нового заказа пользователя
+- orders/?owner_id={id}?categories={cat_id}&status={0|1|2}&actual={true}&executor_id={executor_id} (GET) -
+- получение списка заказов пользователя c параметрами
+- orders/<id>/?executor_id={executor_id} (GET, PUT, PATCH, DELETE) -
+- получение заказа, обновление и удаление заказа пользователя с id
 
+- rating/<int:receiver_id>/authors/ (GET) - получение списка авторов, которые выставили оценки пользователю с id
+- rating/questions/ (GET) - получение списка вопросов для рейтинга
 
-- `selected_user`
-объект с подробными данными о текущем пользователе {id, name, contact_name, region, total_rating и др}
+- supports/ (GET) - получение списка всех вопросов в поддержку
+- supports/<user_id>/ (GET) - получение списка вопросов в поддержку от пользователя user_id
+- supports/<user_id>/<message_id>/ (GET, POST, DELETE) - получение, обновление и удаление вопроса
+- из поддержки по message_id и user_id
 
-
-- `temp_message`
-  (dict) Временные сообщения в текущей секции, которые удаляются после возврата на верхний уровень меню.
-
-
-- `warn_message_id`
-  (int) ID информационного сообщения. Удаляется на экране после перехода в другую секцию
-
-
-- `last_message_id`
-  (int) ID сообщения для обращения внутри текущей секции. Очищается при возврате назад
-
-
-- `last_message_ids`
-  (dict) Словарь ID сообщений для временного хранения в пределах секции. Очищается при переходе в другую секцию 
-
-
-- `local_data`
-    Словарь для хранения промежуточных данных в текущей секции. Очищается при возврате назад
-
-### bot_data:
-    Контекст общедоступных данных для всех пользователей бота
-
-
-- `user_field_names`
-Словарь названий полей модели User для изменения в профиле пользователя
-```json5
-{
-    "name": "Полное название",
-    "contact_name": "Имя контактного лица",
-    "username": "Имя пользователя Telegram",
-    "access": "Вид доступа",
-    "description": "Описание",
-    "business_start_year": "Год начала деятельности",
-    "main_region": "Основной регион",
-    "segment": "Сегмент рынка",
-    "address": "Адрес",
-    "phone": "Контактный телефон",
-    "email": "Электронная почта",
-    "socials_url": "Ссылка на соцсеть",
-    "site_url": "Ссылка на сайт",
-    "categories": "Виды деятельности",
-    "regions": "Дополнительные регионы"
-}
-```
-
-- `rating_questions`
-список вопросов для выставления рейтинга для двух групп поставщиков: аутсорсеры и поставщики
-```json5
-[
-    {
-        "deadlines": "Соблюдение сроков",
-        "sales_service_quality": "Качество сервиса при продаже товаров/услуг"
-    },
-    {
-        "quality": "Качество продукции",
-        "deadlines": "Соблюдение сроков",
-        "sales_service_quality": "Качество сервиса при продаже товаров/услуг",
-        "service_delivery_quality": "Качество сервиса при установке/выполнении работ",
-        "designer_program_quality": "Работа с дизайнерами",
-        "location": "Удобство расположения"
-    }
-]
-```
-
-## Для разработчиков
-- [ссылка на TODO для реализации](docs/TODO.md)
-
-
-## Additional
-example 1: https://github.com/ohld/django-telegram-bot
+- user_field_names/ (GET) - получение имен полей данных пользователя
