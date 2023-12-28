@@ -9,11 +9,12 @@ env = environ.Env()
 env.read_env(path.join(BASE_DIR, '.env'))
 
 SECRET_KEY = env('SECRET_KEY')
-
 DEBUG = env.bool('DEBUG', True)
 
-ALLOWED_HOSTS = ['*']  # env('ALLOWED_HOSTS', list, ['*'])
-
+ALLOWED_HOSTS = env('API_SERVER', list, ['*'])
+CSRF_TRUSTED_ORIGINS = env('API_SERVER', list, [])
+CORS_ALLOWED_ORIGINS = env('BOT_SERVER', list, [])
+CORS_URLS_REGEX = r'^/api/.*$'
 INTERNAL_IPS = ALLOWED_HOSTS
 
 # Application definition
@@ -40,9 +41,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
-
-CORS_ALLOWED_ORIGINS = ["https://api.telegram.org"]
-CORS_URLS_REGEX = r'^/api/.*$'
 
 ROOT_URLCONF = "crm.urls"
 
@@ -109,16 +107,16 @@ USE_L10N = True
 
 USE_TZ = True
 
-PUBLIC_ROOT = env.str('PUBLIC_ROOT')
-
 STATIC_URL = '/static/'
-STATICFILES_DIRS = [
-        path.join(BASE_DIR, PUBLIC_ROOT + 'static/'),
-    ]
+
+if not env.bool('DEBUG', False):
+    STATIC_ROOT = path.join(BASE_DIR, 'static/')
+else:
+    STATICFILES_DIRS = [path.join(BASE_DIR, 'static/')]
 
 # Base url to serve media files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = path.join(BASE_DIR, PUBLIC_ROOT + 'media/')
+MEDIA_ROOT = path.join(BASE_DIR, 'media/')
 FILES_UPLOAD_FOLDER = 'uploads/'
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
