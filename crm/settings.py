@@ -9,12 +9,18 @@ env = environ.Env()
 env.read_env(path.join(BASE_DIR, '.env'))
 
 SECRET_KEY = env('SECRET_KEY')
-DEBUG = env.bool('DEBUG', True)
+DEBUG = env.bool('DEBUG', False)
 
-ALLOWED_HOSTS = env('API_SERVER', list, ['*'])
-CSRF_TRUSTED_ORIGINS = env('API_SERVER', list, [])
-CORS_ALLOWED_ORIGINS = env('BOT_SERVER', list, [])
+API_SERVER = env('API_SERVER', default=None)
+BOT_SERVER = env('BOT_SERVER', default=None)
+
+if API_SERVER:
+    CSRF_TRUSTED_ORIGINS = [API_SERVER]
+if BOT_SERVER:
+    CORS_ALLOWED_ORIGINS = [BOT_SERVER]
+
 CORS_URLS_REGEX = r'^/api/.*$'
+ALLOWED_HOSTS = env('ALLOWED_HOSTS', list, ["*"])
 INTERNAL_IPS = ALLOWED_HOSTS
 
 # Application definition
