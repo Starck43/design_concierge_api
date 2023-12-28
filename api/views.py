@@ -116,7 +116,7 @@ class UserList(ListAPIView):
 			if limit:
 				offset = int(offset)
 				limit = int(limit)
-				queryset = queryset[offset:offset+limit]
+				queryset = queryset[offset:offset + limit]
 
 			serializer = self.get_serializer(queryset, many=True)
 			return Response(serializer.data)
@@ -439,8 +439,10 @@ class UserFieldNamesView(APIView):
 	@classmethod
 	def get_fields(cls):
 		sortable_private_fields = [f for f in User._meta.private_fields if isinstance(f, Field)]
-		return sorted(itertools.chain(User._meta.concrete_fields, sortable_private_fields, User._meta.many_to_many),
-		              key=lambda f: f.creation_counter)
+		return sorted(
+			itertools.chain(User._meta.concrete_fields, sortable_private_fields, User._meta.many_to_many),
+			key=lambda f: f.creation_counter
+		)
 
 	def get(self, request, *args, **kwargs):
 		fields = [
