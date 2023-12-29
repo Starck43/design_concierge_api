@@ -1,9 +1,6 @@
 from django.contrib import admin
 
-from .data import CATEGORIES, USERS
-from .regions import ALL_REGIONS
 from .forms import UserForm
-
 from .models import (
 	UserGroup,
 	Category,
@@ -17,6 +14,7 @@ from .models import (
 	Support,
 	File, Log, Event,
 )
+from .logic import import_users_data, import_categories_data, import_regions_data
 
 admin.site.site_title = 'Консьерж Сервис'
 admin.site.site_header = 'Консьерж Сервис'
@@ -72,40 +70,29 @@ class RegionAdmin(admin.ModelAdmin):
 	actions = ['import_regions']
 
 	def import_regions(self, request, queryset):
-		country = Country.objects.get(code="ru")
-		for data in ALL_REGIONS:
-			if int(data["id"]) >= 0:
-				region = Region(
-					name=data['name'],
-					country=country,
-					place_id=data['place_id'],
-					osm_id=data['osm_id']
-				)
-				region.save()
-		self.message_user(request, "Список импортирован успешно!")
+		count = import_regions_data('src/regions.json')
+		if count is None:
+			self.message_user(request, 'Ошибка импортирования файла!')
+		else:
+			self.message_user(request, f'{count} объектов импортировано успешно!')
 
-	import_regions.short_description = "Импорт списка объектов из констант"
+	import_regions.short_description = "Импорт регионов из файла"
 
 
 class CategoryAdmin(admin.ModelAdmin):
 	list_display = ['id', 'name', 'group']
 	list_display_links = ['name']
-
+	ordering = ['group', 'name']
 	actions = ['import_categories']
 
 	def import_categories(self, request, queryset):
-		for data in CATEGORIES:
-			if data["id"] >= 0:
-				group_code = data['group']
-				user_group = UserGroup.objects.get(code=group_code)
-				category = Category(
-					name=data['name'],
-					group=user_group
-				)
-				category.save()
-		self.message_user(request, "Список импортирован успешно!")
+		count = import_categories_data('src/categories.json')
+		if count is None:
+			self.message_user(request, 'Ошибка импортирования файла!')
+		else:
+			self.message_user(request, f'{count} объектов импортировано успешно!')
 
-	import_categories.short_description = "Импорт списка объектов из констант"
+	import_categories.short_description = "Импорт видов деятельности из файла"
 
 
 @admin.register(User)
@@ -134,27 +121,13 @@ class UserAdmin(admin.ModelAdmin):
 	update_ratings.short_description = "Обновить общий рейтинг у выбранных записей"
 
 	def import_users(self, request, queryset):
-		for data in USERS:
-			try:
-				User.objects.get(id=data['id'])
-				continue
-			except User.DoesNotExist:
-				pass
+		count = import_users_data('src/users.json')
+		if count is None:
+			self.message_user(request, 'Ошибка импортирования файла!')
+		else:
+			self.message_user(request, f'{count} объектов импортировано успешно!')
 
-			if data['id'] >= 0:
-				category = Category.objects.get(pk=data['category'])
-				region = Region.objects.get(osm_id=115100)
-				user = User(
-					name=data['name'],
-					address=data.get('address', ''),
-					phone=data.get('phone', ''),
-				)
-				user.save()
-				user.categories.add(category)
-				user.regions.add(region)
-		self.message_user(request, "Список импортирован успешно!")
-
-	import_users.short_description = "Импорт списка объектов из констант"
+	import_users.short_description = "Импорт пользователей из файла"
 
 
 @admin.register(Rating)

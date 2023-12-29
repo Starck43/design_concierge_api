@@ -1,46 +1,103 @@
-from datetime import date, timedelta
-from typing import Tuple
+from typing import Optional
 
-from django.core.files.storage import FileSystemStorage
-
-
-class MediaFileStorage(FileSystemStorage):
-	def save(self, name, content, max_length=None):
-		if not self.exists(name):
-			return super().save(name, content, max_length)
-		else:
-			# Prevent saving file on disk
-			return name
+from api.models import Country, Region, UserGroup, Category, User
+from api.utils import read_json_data
 
 
-def user_directory_path(instance, filename):
-	directory_path = f'uploads/{instance.user.user_id}'
-	return f'{directory_path}/{filename}'
+def import_regions_data(filename: str) -> Optional[int]:
+	data = read_json_data(filename)
+	if data is None:
+		return None
+
+	count = 0
+	country_code = data[0].get('country_code', 'ru')
+	try:
+		country = Country.objects.get(code=country_code)
+	except Country.DoesNotExist:
+		return None
+
+	for obj in data:
+		name = obj.get('name')
+		place_id = obj.get('place_id')
+		osm_id = obj.get('osm_id')
+
+		try:
+			region = Region.objects.get(osm_id=osm_id)
+			region.name = name
+			region.place_id = place_id
+			region.save()
+
+		except Region.DoesNotExist:
+			region = Region(
+				name=name,
+				country=country,
+				place_id=place_id,
+				osm_id=osm_id
+			)
+			region.save()
+			count += 1
+
+	return count
 
 
-def get_date_range(date_object: date = None) -> Tuple[date, date]:
-	"""
-	Возвращает диапазон дат в зависимости от указанного месяца.
+def import_categories_data(filename: str) -> Optional[int]:
+	data = read_json_data(filename)
+	if data is None:
+		return None
 
-	Аргументы:
-	- date_object (str): Дата в формате datetime (по умолчанию None).
+	count = 0
+	for obj in data:
+		name = obj.get("name")
+		group_code = obj.get('group')
+		if group_code and name:
+			group, _ = UserGroup.objects.get_or_create(code=group_code)
+			category, created = Category.objects.get_or_create(name=name, defaults={'group': group})
+			if created:
+				count += 1
+			elif category.group_id != group_code:
+				category.group_id = group_code
+				category.save()
+	return count
 
-	Возвращает:
-	Кортеж из двух дат: начальная и конечная дата указанного в аргументах месяца.
-	"""
 
-	today = date.today()
+def import_users_data(filename: str) -> Optional[int]:
+	data = read_json_data(filename)
+	if data is None:
+		return None
 
-	if date_object:
-		# Начальная дата - первое число указанного месяца и года
-		start_date = date_object.replace(day=1)
-		# Дата окончания - последнее число указанного месяца
-		end_of_month = date_object.replace(day=1) + timedelta(days=32)
-		end_date = end_of_month.replace(day=1) - timedelta(days=1)
-	else:
-		# Начальная дата - первое число текущего месяца
-		start_date = date(today.year, today.month, 1)
-		# Дата окончания - последнее число текущего месяца плюс 12 месяцев
-		end_date = date(today.year, today.month, 1) + timedelta(days=31) + timedelta(days=365)
+	count = 0
+	for obj in data:
+		name = obj.get("name")
+		category_names = obj.get("categories")
+		region_osm = obj.get("region")
+		address = obj.get("address", "")
+		phone = obj.get("phone", "")
 
-	return start_date, end_date
+		user = User.objects.filter(name=name).first()
+		if not user and name and category_names:
+			if isinstance(category_names, str):
+				category_names = [category_names]  # Convert single category name to a list
+
+			user = User(name=name, address=address, phone=phone)
+			try:
+				region = Region.objects.get(osm_id=region_osm)
+				user.main_region = region
+				user.save()
+				count += 1
+				for category_name in category_names:
+					try:
+						category = Category.objects.get(name=category_name)
+						user.categories.add(category)
+					except Category.DoesNotExist:
+						pass
+			except Region.DoesNotExist:
+				pass
+
+		elif phone or address:
+			if phone and user.phone != phone:
+				user.address = address
+			if address and user.address != address:
+				user.phone = phone
+			user.save()
+
+	return count
