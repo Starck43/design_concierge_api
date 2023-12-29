@@ -8,7 +8,7 @@ from django.db import models
 from django.db.models import Q, Avg, F, FloatField, Case, When
 from rest_framework.authtoken.models import Token
 
-from api.logic import user_directory_path, MediaFileStorage
+from api.utils import user_directory_path, MediaFileStorage
 
 
 def phone_regex(value):
