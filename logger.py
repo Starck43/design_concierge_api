@@ -42,7 +42,7 @@ def log_exception(exc_type, exc_value, exc_traceback):
 
 sys.excepthook = log_exception
 
-LOGGING_CONFIG = {
+logging.config.dictConfig({
 	"version": 1,
 	"disable_existing_loggers": False,
 	"formatters": {
@@ -120,7 +120,5 @@ LOGGING_CONFIG = {
 		"level": "INFO",
 		"handlers": ["brief_info", "log_warn", "log_error"]
 	}
-}
-
-logging.config.dictConfig(LOGGING_CONFIG)
+})
 log = logging.getLogger(__name__)
