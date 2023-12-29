@@ -1,0 +1,22 @@
+name: design_concierge_api CI-CD
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: [self-hosted]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Deploy to server
+      run: |
+        export BASE_DIR=../../../../design_concierge
+        [[ -d $BASE_DIR ]] || mkdir BASE_DIR
+        rsync -a . $BASE_DIR/ --delete -m --exclude 'logs' --exclude '.env' --exclude '.git*' --exclude 'static' --exclude 'media'
+        python3.10 -m venv $BASE_DIR/venv
+        $BASE_DIR/venv/bin/pip install -r $BASE_DIR/requirements.txt
+        $BASE_DIR/venv/bin/python $BASE_DIR/manage.py migrate --noinput
+        systemctl try-restart gunicorn
+        rm -rf *
