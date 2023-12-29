@@ -110,7 +110,11 @@ LOGGING_CONFIG = {
 		"httpcore": {
 			"level": "ERROR",
 			"handlers": ["detail_info"]
-		}
+		},
+		"gunicorn": {
+			"level": "WARNING",
+			"handlers": ["detail_info"]
+		},
 	},
 	"root": {
 		"level": "INFO",
