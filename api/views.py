@@ -17,7 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from api.models import Category, User, Rating, Region, File, Order, Favourite, Support, Message, Log, Event
-from .logic import get_date_range
+from .utils import get_date_range
 from .parser import load_events
 from .serializers import (
 	CategorySerializer, UserListSerializer, RatingSerializer, RegionSerializer, UserDetailSerializer,
