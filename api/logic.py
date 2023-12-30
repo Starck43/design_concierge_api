@@ -50,12 +50,12 @@ def import_categories_data(filename: str) -> Optional[int]:
 		name = obj.get("name")
 		group_code = obj.get('group')
 		if group_code and name:
-			group, _ = UserGroup.objects.get_or_create(code=group_code)
-			category, created = Category.objects.get_or_create(name=name, defaults={'group': group})
+			#group, _ = UserGroup.objects.get_or_create(code=group_code)
+			category, created = Category.objects.get_or_create(name=name, defaults={'group': group_code})
 			if created:
 				count += 1
-			elif category.group_id != group_code:
-				category.group_id = group_code
+			elif category.group != group_code:
+				category.group = group_code
 				category.save()
 	return count
 
@@ -73,31 +73,22 @@ def import_users_data(filename: str) -> Optional[int]:
 		address = obj.get("address", "")
 		phone = obj.get("phone", "")
 
-		user = User.objects.filter(name=name).first()
-		if not user and name and category_names:
-			if isinstance(category_names, str):
-				category_names = [category_names]  # Convert single category name to a list
-
-			user = User(name=name, address=address, phone=phone)
+		user, created = User.objects.get_or_create(name=name, defaults={"address": address, "phone": phone})
+		if created:
 			try:
 				region = Region.objects.get(osm_id=region_osm)
 				user.main_region = region
 				user.save()
 				count += 1
-				for category_name in category_names:
-					try:
-						category = Category.objects.get(name=category_name)
-						user.categories.add(category)
-					except Category.DoesNotExist:
-						pass
 			except Region.DoesNotExist:
 				pass
 
-		elif phone or address:
-			if phone and user.phone != phone:
-				user.address = address
-			if address and user.address != address:
-				user.phone = phone
-			user.save()
+		if category_names:
+			if isinstance(category_names, str):
+				category_names = [category_names]  # Convert single category name to a list
+
+			for category_name in category_names:
+				category, _ = Category.objects.get_or_create(name=category_name)
+				user.categories.add(category)
 
 	return count

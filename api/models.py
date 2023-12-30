@@ -5,7 +5,7 @@ from enum import Enum
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Q, Avg, F, FloatField, Case, When
+from django.db.models import Q, Avg, F, FloatField, Case, When, Count
 from rest_framework.authtoken.models import Token
 
 from api.utils import user_directory_path, MediaFileStorage
@@ -162,9 +162,10 @@ class User(models.Model):
 		help_text='Ключевые поисковые фразы для детального описания пользователя',
 		blank=True
 	)
-	total_rating = models.FloatField('Общий рейтинг', default=0)
-	token = models.ForeignKey(Token, verbose_name='Токен', on_delete=models.SET_NULL, null=True, blank=True,
-	                          related_name='user_token')
+	total_rating = models.FloatField('Общий рейтинг', default=0, editable=False)
+	token = models.ForeignKey(
+		Token, verbose_name='Токен', on_delete=models.SET_NULL, null=True, blank=True, related_name='user_token'
+	)
 
 	class Meta:
 		verbose_name = 'Пользователь'
@@ -178,8 +179,9 @@ class User(models.Model):
 		is_new = self.pk is None
 		super().save(*args, **kwargs)
 
-		if is_new:
-			self.update_total_rating()
+		if not is_new:
+			self.total_rating = self.calculate_total_rating()
+			super().save(*args, **kwargs)
 
 	def delete(self, *args, **kwargs):
 		# Удаление прикрепленных файлов при удалении пользователя
@@ -210,31 +212,29 @@ class User(models.Model):
 		return formatted_rates
 
 	def calculate_total_rating(self, author: int = None):
-		all_fields = [field.name for field in Rating._meta.fields if
-		              isinstance(field, models.PositiveSmallIntegerField)]
-		required_fields = [field.name for field in Rating._meta.fields if
-		                   isinstance(field, models.PositiveSmallIntegerField) and not field.null]
-
+		all_fields = [
+			field.name for field in Rating._meta.fields if
+			isinstance(field, models.PositiveSmallIntegerField)
+		]
+		required_fields = [
+			field.name for field in Rating._meta.fields if
+			isinstance(field, models.PositiveSmallIntegerField) and not field.null
+		]
 		query = Q(receiver=self)
 		if author:
 			query &= Q(author=author)
+		ratings = Rating.objects.filter(query)
+		total_rating = self.total_rating
+		user_groups = self.categories.values_list('group__code', flat=True)
+		print(user_groups)
+		fields = required_fields if Group.OUTSOURCER.value == min(user_groups) else all_fields
+		average_values = ratings.aggregate(**{f'avg_{field}': Avg(field) for field in fields})
+		values = [value for value in average_values.values() if value]
+		if values:
+			total_rating = sum(values) / len(values)
 
-		rating = Rating.objects.filter(query).aggregate(
-			total=Case(
-				When(
-					receiver__categories__group=1,
-					then=Avg(sum(F(field) for field in required_fields)) / len(required_fields)
-				),
-				When(
-					receiver__categories__group=2,
-					then=Avg(sum(F(field) for field in all_fields)) / len(all_fields)
-				),
-				output_field=FloatField(),
-				default=0
-			)
-		)
-
-		return round(rating.get('total', 0), 1)
+		total_rating = round(total_rating, 1)
+		return total_rating
 
 	def calculate_avg_ratings(self, author: int = None):
 		query = Q(receiver=self)
@@ -558,7 +558,7 @@ class Log(models.Model):
 
 
 class Event(models.Model):
-	TYPE_CHOICES = ((0, 'местные события'), (1, 'события в стране'),(2, 'международные события'),)
+	TYPE_CHOICES = ((0, 'местные события'), (1, 'события в стране'), (2, 'международные события'),)
 	type = models.PositiveSmallIntegerField('Категория события', choices=TYPE_CHOICES)
 	group = models.ManyToManyField(UserGroup, related_name='events_for_groups', verbose_name='Группа', blank=True)
 	title = models.CharField('Название события', max_length=255)

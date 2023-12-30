@@ -142,7 +142,8 @@ class RatingAdmin(admin.ModelAdmin):
 
 	def get_exclude(self, request, obj=None):
 		exclude_fields = super().get_exclude(request, obj)
-		if obj.receiver.categories.filter(group=1).exists():
+		# obj and obj.receiver.categories.values_list('group__code', flat=True)
+		if obj and obj.receiver.categories.filter(group__code=1).exists():
 			exclude_fields = [field.name for field in obj._meta.fields if field.null]
 		return exclude_fields
 
