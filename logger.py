@@ -112,7 +112,7 @@ logging.config.dictConfig({
 			"handlers": ["detail_info"]
 		},
 		"gunicorn": {
-			"level": "WARNING",
+			"level": "ERROR",
 			"handlers": ["detail_info"]
 		},
 	},
