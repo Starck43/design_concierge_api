@@ -226,8 +226,9 @@ class User(models.Model):
 		ratings = Rating.objects.filter(query)
 		total_rating = self.total_rating
 		user_groups = self.categories.values_list('group__code', flat=True)
-		print(user_groups)
-		fields = required_fields if Group.OUTSOURCER.value == min(user_groups) else all_fields
+		if not user_groups:
+			return 0
+		fields = required_fields if Group.OUTSOURCER.value == min(user_groups, default=1) else all_fields
 		average_values = ratings.aggregate(**{f'avg_{field}': Avg(field) for field in fields})
 		values = [value for value in average_values.values() if value]
 		if values:
