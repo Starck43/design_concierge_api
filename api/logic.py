@@ -73,7 +73,7 @@ def import_users_data(filename: str) -> Optional[int]:
 		address = obj.get("address", "")
 		phone = obj.get("phone", "")
 
-		user, created = User.objects.get_or_create(name=name, defaults={"address": address, "phone": phone})
+		user, created = User.objects.get_or_create(name=name, address=address, defaults={"phone": phone})
 		if created:
 			try:
 				region = Region.objects.get(osm_id=region_osm)
@@ -88,7 +88,7 @@ def import_users_data(filename: str) -> Optional[int]:
 				category_names = [category_names]  # Convert single category name to a list
 
 			for category_name in category_names:
-				category, _ = Category.objects.get_or_create(name=category_name)
+				category, _ = Category.objects.get_or_create(name=category_name, defaults={"group": 2})
 				user.categories.add(category)
 
 	return count

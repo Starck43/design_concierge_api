@@ -70,7 +70,7 @@ class RegionAdmin(admin.ModelAdmin):
 	actions = ['import_regions']
 
 	def import_regions(self, request, queryset):
-		count = import_regions_data('src/regions.json')
+		count = import_regions_data('import/regions.json')
 		if count is None:
 			self.message_user(request, 'Ошибка импортирования файла!')
 		else:
@@ -86,7 +86,7 @@ class CategoryAdmin(admin.ModelAdmin):
 	actions = ['import_categories']
 
 	def import_categories(self, request, queryset):
-		count = import_categories_data('src/categories.json')
+		count = import_categories_data('import/categories.json')
 		if count is None:
 			self.message_user(request, 'Ошибка импортирования файла!')
 		else:
@@ -121,7 +121,7 @@ class UserAdmin(admin.ModelAdmin):
 	update_ratings.short_description = "Обновить общий рейтинг у выбранных записей"
 
 	def import_users(self, request, queryset):
-		count = import_users_data('src/users.json')
+		count = import_users_data('import/users.json')
 		if count is None:
 			self.message_user(request, 'Ошибка импортирования файла!')
 		else:
