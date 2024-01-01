@@ -50,12 +50,12 @@ def import_categories_data(filename: str) -> Optional[int]:
 		name = obj.get("name")
 		group_code = obj.get('group')
 		if group_code and name:
-			#group, _ = UserGroup.objects.get_or_create(code=group_code)
-			category, created = Category.objects.get_or_create(name=name, defaults={'group': group_code})
+			group, _ = UserGroup.objects.get_or_create(code=group_code)
+			category, created = Category.objects.get_or_create(name=name, defaults={'group': group})
 			if created:
 				count += 1
-			elif category.group != group_code:
-				category.group = group_code
+			elif category.group.code != group_code:
+				category.group = group
 				category.save()
 	return count
 
@@ -84,11 +84,12 @@ def import_users_data(filename: str) -> Optional[int]:
 				pass
 
 		if category_names:
+			default_group = UserGroup.objects.get(code=2)
 			if isinstance(category_names, str):
 				category_names = [category_names]  # Convert single category name to a list
 
 			for category_name in category_names:
-				category, _ = Category.objects.get_or_create(name=category_name, defaults={"group": 2})
+				category, _ = Category.objects.get_or_create(name=category_name, defaults={"group": default_group})
 				user.categories.add(category)
 
 	return count
