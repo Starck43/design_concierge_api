@@ -4,7 +4,7 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
-  workflow_dispatch:
+#  workflow_dispatch:
 jobs:
   deploy:
     runs-on: [self-hosted]
@@ -14,9 +14,10 @@ jobs:
       run: |
         export BASE_DIR=../../../../design_concierge
         [[ -d $BASE_DIR ]] || mkdir BASE_DIR
+        rm -rf $BASE_DIR/venv
         rsync -a . $BASE_DIR/ --delete -m --exclude 'logs' --exclude '.env' --exclude '.git*' --exclude 'static' --exclude 'media'
         python3.10 -m venv $BASE_DIR/venv
         $BASE_DIR/venv/bin/pip install -r $BASE_DIR/requirements.txt
         $BASE_DIR/venv/bin/python $BASE_DIR/manage.py migrate --noinput
-        systemctl try-restart gunicorn
+        sudo systemctl try-restart gunicorn
         rm -rf *
