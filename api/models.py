@@ -5,7 +5,7 @@ from enum import Enum
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Q, Avg, F, FloatField, Case, When, Count
+from django.db.models import Q, Avg, F
 from rest_framework.authtoken.models import Token
 
 from api.utils import user_directory_path, MediaFileStorage
