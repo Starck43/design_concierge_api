@@ -13,6 +13,7 @@ urlpatterns = [
 	path('categories/<int:pk>/', CategoryDetail.as_view(), name='category-detail'),
 	path('users/', UserList.as_view(), name='user-list'),
 	path('users/<int:pk>/', UserDetail.as_view(), name='user-detail'),
+	path('users/check_duplicates/', UserDetail.as_view(), name='check-duplicates'),
 	path('users/create/', UserDetail.as_view(), name='user-create'),
 	path('users/<str:user_id>/update_ratings/', UpdateRatingView.as_view(), name='user-ratings-update'),
 	path('users/<str:user_id>/favourites/', FavouriteListView.as_view(), name='user-favourite-list'),
